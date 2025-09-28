@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+    /* Destinations: [select] [destination] [airfreight] [arrival] [min] [max] */
+
+    .grid-dest{
+        display: grid;
+        grid-template-columns: auto 2fr 1.5fr 1.5fr 1fr 1fr 1fr;
+        gap: theme('spacing.2');
+        align-items: center;
+    }
+
+    .grid-dest-header {
+        @apply font-semibold text-gray-700 border-b pb-1 mb-1;
+        display: grid;
+        grid-template-columns: auto 2fr 1.5fr 1.5fr 1fr 1fr 1fr;
+        gap: theme('spacing.2');
+    }
+
+    /* Sizes: [select] [fish type] [cut] [grade] [weight range] [price/kg] [qty]] */
+    .grid-size {
+        display: grid;
+        grid-template-columns: auto 2fr 1fr 1fr 1.5fr 1fr 1fr;
+        gap: theme('spacing.2');
+        align-items: center;
+    }
+
+    .grid-size-header {
+        @apply font-semibold text-gray-700 border-b pb-1 mb-1;
+        display: grid;
+        grid-template-columns: auto 2fr 1fr 1fr 1.5fr 1fr 1fr;
+        gap: theme('spacing.2');
+    }
+}
+
+@layer components {
+    .form-input {
+      @apply w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 appearance-none;
+    }
+}
+
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    color: white;
+  }
+}

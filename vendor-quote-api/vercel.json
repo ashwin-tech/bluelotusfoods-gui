@@ -1,0 +1,54 @@
+{
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    }
+  ],
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/.*", "dest": "/index.html" }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/vendors/:path*",
+      "destination": "https://bluelotusfoods-api.onrender.com/vendors/:path*"
+    },
+    {
+      "source": "/api/dictionary/:path*",
+      "destination": "https://bluelotusfoods-api.onrender.com/dictionary/:path*"
+    },
+    {
+      "source": "/api/fish/:path*",
+      "destination": "https://bluelotusfoods-api.onrender.com/fish/:path*"
+    },
+    {
+      "source": "/api/quotes/:path*",
+      "destination": "https://bluelotusfoods-api.onrender.com/quotes/:path*"
+    },
+    {
+      "source": "/api/email/:path*",
+      "destination": "https://bluelotusfoods-email.onrender.com/:path*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options", 
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    }
+  ]
+}

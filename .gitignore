@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+vendor-quote-api/node_modules/
+
+# Production builds
+dist/
+vendor-quote-api/dist/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+vendor-quote-api/.env*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Vite cache
+.vite/
