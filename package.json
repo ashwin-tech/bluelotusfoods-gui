@@ -1,0 +1,37 @@
+{
+  "name": "bluelotusfoods-gui",
+  "version": "1.0.0",
+  "description": "Blue Lotus Foods - GUI Applications Monorepo",
+  "private": true,
+  "config": {
+    "ports": {
+      "vendor-apps/quote-form": 5173,
+      "vendor-apps/markup-screen": 5174,
+      "buyer-apps/package-list": 5175,
+      "admin-apps/dashboard": 5176
+    }
+  },
+  "workspaces": [
+    "vendor-apps/*",
+    "buyer-apps/*",
+    "admin-apps/*"
+  ],
+  "scripts": {
+    "dev:quote-form": "npm run dev --workspace=vendor-apps/quote-form",
+    "dev:quote-form:staging": "npm run dev --workspace=vendor-apps/quote-form -- --mode staging",
+    "build:quote-form": "npm run build --workspace=vendor-apps/quote-form",
+    "build:quote-form:staging": "npm run build --workspace=vendor-apps/quote-form -- --mode staging",
+    "preview:quote-form": "npm run preview --workspace=vendor-apps/quote-form",
+    "dev:all": "npm run dev --workspaces",
+    "build:all": "npm run build --workspaces",
+    "install:all": "npm install --workspaces"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
