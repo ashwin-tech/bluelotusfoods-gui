@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: true, // Allow external access
+    port: 5173, // Fixed port for quote-form app
   },
   build: {
     outDir: 'dist',
