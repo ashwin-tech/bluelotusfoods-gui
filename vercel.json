@@ -1,8 +1,4 @@
 {
-  "buildCommand": "cd vendor-apps/quote-form && npm install && npm run build",
-  "outputDirectory": "vendor-apps/quote-form/dist",
-  "installCommand": "cd vendor-apps/quote-form && npm install",
-  "framework": "vite",
   "rewrites": [
     {
       "source": "/api/vendors/:path*",
