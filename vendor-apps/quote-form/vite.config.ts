@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+  base: '/quotes/',
   plugins: [react(), tailwindcss()],
   // Load env vars from the monorepo root (../../)
   // so a single bluelotusfoods-gui/.env works during local dev
