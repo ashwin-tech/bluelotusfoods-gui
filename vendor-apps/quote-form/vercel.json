@@ -1,7 +1,4 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "installCommand": "npm install",
   "rewrites": [
     {
       "source": "/api/vendors/:path*",
@@ -20,7 +17,7 @@
       "destination": "https://api.thebluelotusfoods.com/quotes/:path*"
     },
     {
-      "source": "/(.*)",
+      "source": "/:path*",
       "destination": "/index.html"
     }
   ]
