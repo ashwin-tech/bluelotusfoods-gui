@@ -1,4 +1,5 @@
 {
+  "comment": "Using only rewrites and headers - routes/builds are deprecated",
   "rewrites": [
     {
       "source": "/api/vendors/:path*",
