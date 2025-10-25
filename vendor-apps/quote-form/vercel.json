@@ -17,7 +17,7 @@
       "destination": "https://api.thebluelotusfoods.com/quotes/:path*"
     },
     {
-      "source": "/:path((?!api).*)*",
+      "source": "/:path((?!api).*)",
       "destination": "/index.html"
     }
   ],
