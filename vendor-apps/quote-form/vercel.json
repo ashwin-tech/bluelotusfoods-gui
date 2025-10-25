@@ -1,15 +1,5 @@
 {
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
-    }
-  ],
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/.*", "dest": "/index.html" }
-  ],
+  "comment": "Using only rewrites and headers - routes/builds are deprecated",
   "rewrites": [
     {
       "source": "/api/vendors/:path*",
@@ -26,6 +16,10 @@
     {
       "source": "/api/quotes/:path*",
       "destination": "https://api.thebluelotusfoods.com/quotes/:path*"
+    },
+    {
+      "source": "/:path((?!api).*)*",
+      "destination": "/index.html"
     }
   ],
   "headers": [
