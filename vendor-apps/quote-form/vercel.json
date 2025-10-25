@@ -13,23 +13,19 @@
   "rewrites": [
     {
       "source": "/api/vendors/:path*",
-      "destination": "https://bluelotusfoods-api.onrender.com/vendors/:path*"
+      "destination": "https://api.thebluelotusfoods.com/vendors/:path*"
     },
     {
       "source": "/api/dictionary/:path*",
-      "destination": "https://bluelotusfoods-api.onrender.com/dictionary/:path*"
+      "destination": "https://api.thebluelotusfoods.com/dictionary/:path*"
     },
     {
       "source": "/api/fish/:path*",
-      "destination": "https://bluelotusfoods-api.onrender.com/fish/:path*"
+      "destination": "https://api.thebluelotusfoods.com/fish/:path*"
     },
     {
       "source": "/api/quotes/:path*",
-      "destination": "https://bluelotusfoods-api.onrender.com/quotes/:path*"
-    },
-    {
-      "source": "/api/email/:path*",
-      "destination": "https://bluelotusfoods-email.onrender.com/:path*"
+      "destination": "https://api.thebluelotusfoods.com/quotes/:path*"
     }
   ],
   "headers": [
