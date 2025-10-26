@@ -9,8 +9,8 @@ function App() {
         {/* Default route if someone just goes to / */}
         <Route path="/" element={<VendorQuoteForm />} />
 
-        {/* Vendor-specific route */}
-        <Route path="/quotes/:vendorCode" element={<FetchVendor />} />
+        {/* Vendor-specific route - now at root level since using subdomain */}
+        <Route path="/:vendorCode" element={<FetchVendor />} />
       </Routes>
     </Router>
   );

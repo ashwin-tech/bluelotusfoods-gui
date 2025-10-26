@@ -1,5 +1,4 @@
 {
-  "comment": "Using only rewrites and headers - routes/builds are deprecated",
   "rewrites": [
     {
       "source": "/api/vendors/:path*",
@@ -18,27 +17,8 @@
       "destination": "https://api.thebluelotusfoods.com/quotes/:path*"
     },
     {
-      "source": "/:path((?!api).*)*",
+      "source": "/:path*",
       "destination": "/index.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
-        },
-        {
-          "key": "X-Frame-Options", 
-          "value": "DENY"
-        },
-        {
-          "key": "X-XSS-Protection",
-          "value": "1; mode=block"
-        }
-      ]
     }
   ]
 }
