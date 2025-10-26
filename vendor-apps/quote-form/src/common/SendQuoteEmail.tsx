@@ -1,6 +1,6 @@
 export async function sendQuoteEmail(quoteId: number): Promise<any> {
   try {
-    const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/quotes/${quoteId}/email/`;
+    const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/quotes/${quoteId}/email`;
     console.log("🚀 Sending email request to:", apiUrl);
     console.log("🔍 Quote ID:", quoteId);
     console.log("🌐 API Base URL:", import.meta.env.VITE_API_BASE_URL);
