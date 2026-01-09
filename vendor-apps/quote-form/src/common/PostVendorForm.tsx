@@ -2,12 +2,12 @@ export async function postVendorForm(data: any): Promise<any> {
   try {
     const baseUrl = import.meta.env.VITE_API_BASE_URL;
     console.log("🔍 VITE_API_BASE_URL:", baseUrl);
-    console.log("🔍 Full URL:", `${baseUrl}/quotes/`);
+    console.log("🔍 Full URL:", `${baseUrl}/quotes`);
     if (!baseUrl) {
       console.error("VITE_API_BASE_URL is not defined. Set it in your .env file.");
       throw new Error("API base URL not configured");
     }
-    const response = await fetch(`${baseUrl}/quotes/`, {
+    const response = await fetch(`${baseUrl}/quotes`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
