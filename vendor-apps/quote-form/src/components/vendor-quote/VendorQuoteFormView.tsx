@@ -371,6 +371,70 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
           </div>
         </div>
 
+        {/* Quote Summary Section - Only show if destinations have values */}
+        {formData.destinations.some(dest => dest.destination) && (
+          <div className="border-2 border-blue-200 rounded-lg p-6 bg-blue-50">
+            <h2 className="text-xl font-bold mb-4 text-blue-900">Quote Summary</h2>
+            
+            {formData.destinations
+              .filter(dest => dest.destination) // Only show destinations that have a destination selected
+              .map((destination, destIndex) => {
+                const airfreightPerKg = parseFloat(destination.airfreightPerKg.replace(/[^0-9.]/g, '') || "0");
+                
+                return (
+                  <div key={destination.id} className="mb-6 last:mb-0">
+                    <h3 className="text-lg font-semibold mb-3 text-blue-800">
+                      {destination.destination}
+                      {destination.arrivalDate && ` - Arrival: ${destination.arrivalDate}`}
+                    </h3>
+                    
+                    <div className="overflow-x-auto">
+                      <table className="bg-white rounded-lg shadow" style={{width: 'auto'}}>
+                        <thead className="bg-blue-600 text-white">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-white" style={{width: '200px'}}>Fish</th>
+                            <th className="px-4 py-2 text-left text-white" style={{width: '120px'}}>Cut</th>
+                            <th className="px-4 py-2 text-left text-white" style={{width: '100px'}}>Grade</th>
+                            <th className="px-4 py-2 text-left text-white" style={{width: '160px'}}>Wt/Fish (Kg up)</th>
+                            <th className="px-2 py-2 text-right text-white" style={{width: '110px'}}>Airfreight/kg</th>
+                            <th className="px-2 py-2 text-right text-white" style={{width: '100px'}}>Price/kg</th>
+                            <th className="px-2 py-2 text-right text-white" style={{width: '100px'}}>Total/kg</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {formData.sizes.map((size, sizeIndex) => {
+                            const pricePerKg = parseFloat(size.pricePerKg.replace(/[^0-9.]/g, '') || "0");
+                            const totalPerKg = airfreightPerKg + pricePerKg;
+                            
+                            return (
+                              <tr key={size.id} className={sizeIndex % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                                <td className="px-4 py-2 border-t" style={{color: '#111827', width: '200px'}}>{size.fishType || '-'}</td>
+                                <td className="px-4 py-2 border-t" style={{color: '#111827', width: '120px'}}>{size.cut || '-'}</td>
+                                <td className="px-4 py-2 border-t" style={{color: '#111827', width: '100px'}}>{size.grade || '-'}</td>
+                                <td className="px-4 py-2 border-t" style={{color: '#111827', width: '160px'}}>{size.weightRange || '-'}</td>
+                                <td className="px-2 py-2 border-t text-right" style={{color: '#111827', width: '110px'}}>${airfreightPerKg.toFixed(2)}</td>
+                                <td className="px-2 py-2 border-t text-right" style={{color: '#111827', width: '100px'}}>${pricePerKg.toFixed(2)}</td>
+                                <td className="px-2 py-2 border-t text-right font-semibold" style={{color: '#1e40af', width: '100px'}}>
+                                  ${totalPerKg.toFixed(2)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    
+                    {destination.minWeight && destination.maxWeight && (
+                      <p className="text-sm text-gray-600 mt-2">
+                        Weight Range: {destination.minWeight} - {destination.maxWeight} kg
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
         <button 
           type="submit" 
           disabled={isSubmitting}

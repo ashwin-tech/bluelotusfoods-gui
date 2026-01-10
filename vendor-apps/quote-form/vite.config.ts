@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   base: '/', // Ensure assets are loaded from root, not relative to current path
+  envDir: '../../', // Load .env files from monorepo root
   plugins: [react(), tailwindcss()],
   server: {
     host: true, // Allow external access
