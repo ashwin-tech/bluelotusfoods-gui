@@ -229,23 +229,24 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
       const result = await postVendorForm(payload);
       console.log("Form submitted successfully:", result);
       
-      // Try to send email notification
+      // Email notifications are sent automatically by the backend
+      // Check the email_status in the result
       if (result && result.id) {
-        try {
-          console.log("📝 Form submission result:", result);
-          console.log("📧 Attempting to send email notification for quote ID:", result.id);
-          console.log("🔢 Quote ID type:", typeof result.id);
-          const emailResult = await sendQuoteEmail(result.id);
-          console.log("📬 Email notification result:", emailResult);
-          
-          if (emailResult.success) {
-            alert("Quote submitted successfully! Email confirmation sent to vendor.");
-          } else {
-            alert("Quote submitted successfully! However, email notification failed to send.");
-          }
-        } catch (emailError: any) {
-          console.warn("Email sending failed:", emailError.message);
-          alert("Quote submitted successfully! However, email notification could not be sent.");
+        console.log("📝 Form submission result:", result);
+        console.log("📧 Email status from backend:", result.email_status);
+        
+        // Check if emails were sent successfully
+        const vendorEmailSent = result.email_status?.vendor_email === 200;
+        const ownerEmailSent = result.email_status?.owner_email === 200;
+        
+        if (vendorEmailSent && ownerEmailSent) {
+          alert("Quote submitted successfully! Email notifications sent to vendor and sales team.");
+        } else if (vendorEmailSent) {
+          alert("Quote submitted successfully! Vendor email sent, but sales notification may have failed.");
+        } else if (ownerEmailSent) {
+          alert("Quote submitted successfully! Sales notification sent, but vendor email may have failed.");
+        } else {
+          alert("Quote submitted successfully! However, email notifications may have failed.");
         }
       } else {
         alert("Quote submitted successfully!");
