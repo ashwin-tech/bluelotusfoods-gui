@@ -1,0 +1,1157 @@
+import React, { useState, useEffect } from 'react';
+import ClearingPricingForm from './ClearingPricingForm';
+import SummaryTab from './SummaryTab';
+
+// Utility function to format date with day of the week
+const formatDateWithDay = (dateString: string): string => {
+  if (!dateString) return '';
+  
+  // Parse as local date to avoid timezone issues
+  // dateString format: "YYYY-MM-DD"
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day); // month is 0-indexed
+  
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayName = days[date.getDay()];
+  
+  return `${dayName}, ${dateString}`;
+};
+
+interface Buyer {
+  id: number;
+  name: string;
+  email: string | null;
+  company_id: number;
+  company_name: string;
+  active: boolean;
+}
+
+interface Vendor {
+  id: number;
+  name: string;
+}
+
+interface Port {
+  id: number;
+  code: string;
+  name: string;
+}
+
+interface Estimate {
+  quote_id: number;
+  quote_date: string;
+  vendor_id: number;
+  vendor_name: string;
+  port: string;
+  fish_species_id: number;
+  common_name: string;
+  scientific_name: string;
+  cut_id: number;
+  cut: string;
+  grade_id: number;
+  grade: string;
+  fish_size?: string;  // Weight range from vendor quote (optional, editable)
+  fish_price: number;
+  freight_price: number;
+  tariff_percent: number;
+  margin: number;
+  tariff_amount: number;
+  base_cost: number;
+  total_price: number;
+  is_selected?: boolean;  // Track checkbox selection
+}
+
+interface Props {
+  apiBaseUrl: string;
+}
+
+interface CompanyFormState {
+  selectedVendors: number[];
+  selectedPorts: string[];
+  dateRange: string;
+  deliveryDateFrom: string;
+  deliveryDateTo: string;
+  buyerEmails: {name: string, email: string}[];
+  selectedBuyerEmails: Set<string>; // Track selected buyer emails by email address
+  estimates: Estimate[];
+}
+
+const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
+  const [mainTab, setMainTab] = useState<'buyer-pricing' | 'clearing-pricing' | 'summary'>('buyer-pricing');
+  const [buyers, setBuyers] = useState<Buyer[]>([]);
+  const [selectedBuyers, setSelectedBuyers] = useState<number[]>([]);
+  const [selectedCustomerTab, setSelectedCustomerTab] = useState<number | null>(null);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [ports, setPorts] = useState<Port[]>([]);
+  const [buyerSearch, setBuyerSearch] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [showPortDropdown, setShowPortDropdown] = useState(false);
+  const [showVendorDropdown, setShowVendorDropdown] = useState(false);
+  
+  // Store form state per company
+  const [companyFormState, setCompanyFormState] = useState<Record<number, CompanyFormState>>({});
+
+  // Helper to get current company ID from selected tab
+  const getCurrentCompanyId = (): number | null => {
+    if (!selectedCustomerTab) return null;
+    const buyer = buyers.find(b => b.id === selectedCustomerTab);
+    return buyer?.company_id ?? null;
+  };
+
+  // Helper to get current company's form state
+  const getCurrentFormState = (): CompanyFormState => {
+    const companyId = getCurrentCompanyId();
+    if (!companyId) {
+      return {
+        selectedVendors: [],
+        selectedPorts: [],
+        dateRange: 'This Week',
+        deliveryDateFrom: '',
+        deliveryDateTo: '',
+        buyerEmails: [],
+        selectedBuyerEmails: new Set(),
+        estimates: []
+      };
+    }
+    return companyFormState[companyId] || {
+      selectedVendors: [],
+      selectedPorts: [],
+      dateRange: 'This Week',
+      deliveryDateFrom: '',
+      deliveryDateTo: '',
+      buyerEmails: [],
+      selectedBuyerEmails: new Set(),
+      estimates: []
+    };
+  };
+
+  // Helper to update current company's form state
+  const updateCurrentFormState = (updates: Partial<CompanyFormState>) => {
+    const companyId = getCurrentCompanyId();
+    if (!companyId) return;
+    
+    setCompanyFormState(prev => ({
+      ...prev,
+      [companyId]: {
+        ...getCurrentFormState(),
+        ...updates
+      }
+    }));
+  };
+
+  // Fetch buyers on mount
+  useEffect(() => {
+    fetchBuyers();
+    fetchVendors();
+    fetchPorts();
+  }, []);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.port-dropdown') && !target.closest('.vendor-dropdown')) {
+        setShowPortDropdown(false);
+        setShowVendorDropdown(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Auto-load quotes when vendors, ports, or date range change
+  useEffect(() => {
+    if (!selectedCustomerTab) return;
+    
+    const companyId = getCurrentCompanyId();
+    if (!companyId) return;
+    
+    const formState = companyFormState[companyId];
+    if (formState && formState.selectedVendors.length > 0) {
+      handleSearch();
+    }
+  }, [
+    selectedCustomerTab,
+    // Only track the search criteria, not the results (estimates)
+    companyFormState[getCurrentCompanyId() ?? -1]?.selectedVendors,
+    companyFormState[getCurrentCompanyId() ?? -1]?.selectedPorts,
+    companyFormState[getCurrentCompanyId() ?? -1]?.dateRange
+  ]);
+
+  const fetchBuyers = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/buyer-pricing/buyers`);
+      const data = await response.json();
+      setBuyers(data);
+    } catch (error) {
+      console.error('Error fetching buyers:', error);
+    }
+  };
+
+  const fetchVendors = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/buyer-pricing/vendors/`);
+      const data = await response.json();
+      setVendors(data);
+    } catch (error) {
+      console.error('Error fetching vendors:', error);
+    }
+  };
+
+  const fetchPorts = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/dictionary/DESTINATION`);
+      const data = await response.json();
+      setPorts(data);
+    } catch (error) {
+      console.error('Error fetching ports:', error);
+    }
+  };
+
+  const toggleCompanySelection = (companyId: number) => {
+    // Get all buyer IDs for this company
+    const companyBuyerIds = buyers
+      .filter(b => b.company_id === companyId)
+      .map(b => b.id);
+    
+    // Check if all buyers from this company are selected
+    const allSelected = companyBuyerIds.every(id => selectedBuyers.includes(id));
+    
+    if (allSelected) {
+      // Don't allow unchecking from sidebar - only through tab close button
+      return;
+    } else {
+      // Select all buyers from this company
+      const newSelectedBuyers = [...new Set([...selectedBuyers, ...companyBuyerIds])];
+      setSelectedBuyers(newSelectedBuyers);
+      
+      // Auto-select the first buyer as the active tab and load its data
+      if (companyBuyerIds.length > 0) {
+        const firstBuyerId = companyBuyerIds[0];
+        setSelectedCustomerTab(firstBuyerId);
+        // Trigger the tab click handler to load company data
+        handleCustomerTabClick(firstBuyerId);
+      }
+    }
+  };
+
+  const handleCloseTab = (companyId: number, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent tab click
+    
+    // Check if there's data in the form (estimates, selected vendors, ports, etc.)
+    const formState = companyFormState[companyId];
+    const hasData = formState && (formState.estimates.length > 0 || formState.selectedVendors.length > 0 || formState.selectedPorts.length > 0);
+    
+    if (hasData) {
+      const confirmClose = window.confirm('You have unsaved data. Are you sure you want to close this tab?');
+      if (!confirmClose) {
+        return;
+      }
+    }
+    
+    // Remove company state
+    setCompanyFormState(prev => {
+      const newState = { ...prev };
+      delete newState[companyId];
+      return newState;
+    });
+    
+    // Deselect all buyers from this company
+    const companyBuyerIds = buyers
+      .filter(b => b.company_id === companyId)
+      .map(b => b.id);
+    setSelectedBuyers(prev => prev.filter(id => !companyBuyerIds.includes(id)));
+    
+    // If the closed tab was active, switch to another tab or clear
+    const activeBuyer = buyers.find(b => b.id === selectedCustomerTab);
+    if (activeBuyer && activeBuyer.company_id === companyId) {
+      // Find another selected company to switch to
+      const remainingBuyers = selectedBuyers.filter(id => {
+        const buyer = buyers.find(b => b.id === id);
+        return buyer && buyer.company_id !== companyId;
+      });
+      
+      if (remainingBuyers.length > 0) {
+        setSelectedCustomerTab(remainingBuyers[0]);
+      } else {
+        setSelectedCustomerTab(null);
+      }
+    }
+  };
+
+  // Group buyers by company
+  const groupedBuyers = buyers.reduce((acc, buyer) => {
+    if (!acc[buyer.company_id]) {
+      acc[buyer.company_id] = {
+        company_id: buyer.company_id,
+        company_name: buyer.company_name,
+        buyers: []
+      };
+    }
+    acc[buyer.company_id].buyers.push(buyer);
+    return acc;
+  }, {} as Record<number, { company_id: number; company_name: string; buyers: Buyer[] }>);
+
+  // Filter companies based on search
+  const filteredCompanies = Object.values(groupedBuyers).filter(company =>
+    company.company_name.toLowerCase().includes(buyerSearch.toLowerCase())
+  );
+
+  const handleCustomerTabClick = async (buyerId: number) => {
+    setSelectedCustomerTab(buyerId);
+    
+    // Fetch buyer's company emails
+    const buyer = buyers.find(b => b.id === buyerId);
+    if (buyer) {
+      try {
+        const response = await fetch(`${apiBaseUrl}/buyer-pricing/company/${buyer.company_id}/buyers`);
+        const companyBuyers = await response.json();
+        
+        // Initialize or update company state with buyer emails
+        const currentState = companyFormState[buyer.company_id] || {
+          selectedVendors: [],
+          selectedPorts: [],
+          dateRange: 'This Week',
+          deliveryDateFrom: '',
+          deliveryDateTo: '',
+          buyerEmails: [],
+          selectedBuyerEmails: new Set(),
+          estimates: []
+        };
+        
+        setCompanyFormState(prev => ({
+          ...prev,
+          [buyer.company_id]: {
+            ...currentState,
+            buyerEmails: companyBuyers.map((b: Buyer) => ({ name: b.name, email: b.email || '' }))
+          }
+        }));
+      } catch (error) {
+        console.error('Error fetching company buyers:', error);
+      }
+    }
+  };
+
+  const handleSearch = async () => {
+    // Get buyers for the current active tab only
+    const activeBuyer = buyers.find(b => b.id === selectedCustomerTab);
+    if (!activeBuyer) {
+      return;
+    }
+    
+    // Get current form state
+    const formState = getCurrentFormState();
+    
+    // Get all buyer IDs from the active company
+    const currentCompanyBuyerIds = buyers
+      .filter(b => b.company_id === activeBuyer.company_id)
+      .map(b => b.id);
+    
+    if (currentCompanyBuyerIds.length === 0 || formState.selectedVendors.length === 0) {
+      alert('Please select at least one vendor');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/buyer-pricing/estimates/search`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          buyer_ids: currentCompanyBuyerIds, // Use only current company's buyers
+          vendor_ids: formState.selectedVendors,
+          port_codes: formState.selectedPorts,
+          date_range: formState.dateRange
+        })
+      });
+
+      const data = await response.json();
+      const newEstimates = data.estimates || [];
+      
+      // Preserve existing margins and selections when updating with fresh data
+      const existingEstimates = formState.estimates;
+      const mergedEstimates = newEstimates.map((newEst: Estimate) => {
+        // Find matching estimate by quote_id, vendor, port, fish, cut, grade
+        const existing = existingEstimates.find((e: Estimate) => 
+          e.quote_id === newEst.quote_id &&
+          e.vendor_id === newEst.vendor_id &&
+          e.port === newEst.port &&
+          e.fish_species_id === newEst.fish_species_id &&
+          e.cut_id === newEst.cut_id &&
+          e.grade_id === newEst.grade_id
+        );
+        
+        if (existing) {
+          // Preserve margin and selection from existing
+          return {
+            ...newEst,
+            margin: existing.margin,
+            is_selected: existing.is_selected
+          };
+        }
+        
+        return newEst;
+      });
+      
+      updateCurrentFormState({ estimates: mergedEstimates });
+    } catch (error) {
+      console.error('Error searching estimates:', error);
+      alert('Error fetching estimates');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveEstimate = async () => {
+    // Get all unique company IDs from selected buyers
+    const allCompanyIds = [...new Set(
+      selectedBuyers
+        .map(buyerId => buyers.find(b => b.id === buyerId))
+        .filter(buyer => buyer !== undefined)
+        .map(buyer => buyer!.company_id)
+    )];
+
+    if (allCompanyIds.length === 0) {
+      alert('No companies selected');
+      return;
+    }
+
+    // Check each company for selected quotes
+    const companiesWithSelections: Array<{
+      companyId: number;
+      companyName: string;
+      buyerId: number;
+      buyerName: string;
+      buyerIds: number[];
+      selectedCount: number;
+    }> = [];
+
+    allCompanyIds.forEach(companyId => {
+      const formState = companyFormState[companyId];
+      if (formState && formState.estimates) {
+        const selectedEstimates = formState.estimates.filter((e: Estimate) => e.is_selected);
+        if (selectedEstimates.length > 0) {
+          // Get buyers for this company that have their emails selected in the form
+          const companyBuyers = buyers.filter(b => b.company_id === companyId);
+          
+          // Convert selectedBuyerEmails (Set of email strings) to buyer IDs
+          const selectedBuyerIdsForCompany = companyBuyers
+            .filter(buyer => buyer.email && formState.selectedBuyerEmails.has(buyer.email))
+            .map(buyer => buyer.id);
+          
+          const firstBuyer = companyBuyers[0];
+          if (firstBuyer) {
+            companiesWithSelections.push({
+              companyId,
+              companyName: firstBuyer.company_name,
+              buyerId: firstBuyer.id,
+              buyerName: firstBuyer.name,
+              buyerIds: selectedBuyerIdsForCompany.length > 0 ? selectedBuyerIdsForCompany : [firstBuyer.id],
+              selectedCount: selectedEstimates.length
+            });
+          }
+        }
+      }
+    });
+
+    if (companiesWithSelections.length === 0) {
+      alert('No quotes selected in any company. Please select at least one quote using the checkboxes.');
+      return;
+    }
+
+    // Confirm before saving
+    const companyList = companiesWithSelections
+      .map(c => `${c.companyName} (${c.selectedCount} quote${c.selectedCount > 1 ? 's' : ''})`)
+      .join('\n');
+    
+    const confirmSave = window.confirm(
+      `Save estimates for the following companies?\n\n${companyList}\n\nThis will create ${companiesWithSelections.length} estimate${companiesWithSelections.length > 1 ? 's' : ''}.`
+    );
+
+    if (!confirmSave) return;
+
+    setLoading(true);
+    const savedEstimates: string[] = [];
+    const failedEstimates: Array<{company: string, error: string}> = [];
+
+    try {
+      // Save estimate for each company
+      for (const company of companiesWithSelections) {
+        try {
+          const formState = companyFormState[company.companyId];
+          const selectedEstimates = formState.estimates.filter((e: Estimate) => e.is_selected);
+
+          // For each selected estimate, calculate clearing charges with 3 tiers
+          const itemsToSave = await Promise.all(
+            selectedEstimates.map(async (estimate: any) => {
+              // Call clearing calculator to get 3 tiers
+              const clearingResponse = await fetch(`${apiBaseUrl}/buyer-pricing/clearing-calculator/calculate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fish_price: estimate.fish_price,
+                  freight_price: estimate.freight_price,
+                  tariff_percent: estimate.tariff_percent,
+                  fish_species_id: estimate.fish_species_id || 1,
+                  margin: estimate.margin || 0
+                })
+              });
+
+              const clearingData = await clearingResponse.json();
+              
+              // Create 3 items (one for each tier)
+              const tiers = ['tier_10k', 'tier_20k', 'tier_30k'];
+              return tiers.map(tierKey => {
+                const tier = clearingData.tiers[tierKey];
+                return {
+                  vendor_id: estimate.vendor_id,
+                  port_code: estimate.port,
+                  fish_species_id: estimate.fish_species_id || 1,
+                  cut_id: estimate.cut_id || 1,
+                  grade_id: estimate.grade_id || 1,
+                  fish_size: estimate.fish_size || null,
+                  fish_price: estimate.fish_price,
+                  freight_price: estimate.freight_price,
+                  tariff_percent: estimate.tariff_percent,
+                  margin: estimate.margin || 0,
+                  clearing_charges: tier.clearing_per_lb,
+                  offer_quantity: tier.offer_quantity_lbs
+                };
+              });
+            })
+          );
+
+          // Flatten the array (each estimate creates 3 items)
+          const flattenedItems = itemsToSave.flat();
+
+          // Save to buyer_estimate table
+          const saveResponse = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              company_id: company.companyId,
+              buyer_id: company.buyerId,
+              buyer_ids: company.buyerIds.join(','), // Send as comma-separated string
+              items: flattenedItems,
+              notes: `Estimate for ${company.buyerName}`,
+              delivery_date_from: formState.deliveryDateFrom || null,
+              delivery_date_to: formState.deliveryDateTo || null,
+              region_groups: []
+            })
+          });
+
+          const saveData = await saveResponse.json();
+          
+          if (saveData.success) {
+            savedEstimates.push(`${company.companyName}: ${saveData.estimate_number}`);
+          } else {
+            failedEstimates.push({
+              company: company.companyName,
+              error: saveData.detail || 'Unknown error'
+            });
+          }
+        } catch (error) {
+          failedEstimates.push({
+            company: company.companyName,
+            error: String(error)
+          });
+        }
+      }
+
+      // Show results
+      let message = '';
+      if (savedEstimates.length > 0) {
+        message += `✓ Successfully saved ${savedEstimates.length} estimate${savedEstimates.length > 1 ? 's' : ''}:\n\n${savedEstimates.join('\n')}`;
+      }
+      if (failedEstimates.length > 0) {
+        if (message) message += '\n\n';
+        message += `✗ Failed to save ${failedEstimates.length} estimate${failedEstimates.length > 1 ? 's' : ''}:\n\n${failedEstimates.map(f => `${f.company}: ${f.error}`).join('\n')}`;
+      }
+      
+      alert(message);
+      
+    } catch (error) {
+      console.error('Error saving estimates:', error);
+      alert('Error saving estimates: ' + error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMarginChange = (index: number, value: string) => {
+    const formState = getCurrentFormState();
+    const updatedEstimates = [...formState.estimates];
+    const estimate = updatedEstimates[index];
+    const newMargin = parseFloat(value) || 0;
+    
+    // Recalculate total: ((Fish Price + Margin) + Tariff on (Fish Price + Margin)) + Freight Price
+    const fishPriceWithMargin = estimate.fish_price + newMargin;
+    const tariffAmount = (fishPriceWithMargin * estimate.tariff_percent) / 100;
+    const newTotal = fishPriceWithMargin + tariffAmount + estimate.freight_price;
+    
+    updatedEstimates[index] = {
+      ...estimate,
+      margin: newMargin,
+      total_price: newTotal
+    };
+    updateCurrentFormState({ estimates: updatedEstimates });
+  };
+
+  const handleSizeChange = (index: number, value: string) => {
+    const formState = getCurrentFormState();
+    const updatedEstimates = [...formState.estimates];
+    updatedEstimates[index] = {
+      ...updatedEstimates[index],
+      fish_size: value
+    };
+    updateCurrentFormState({ estimates: updatedEstimates });
+  };
+
+  const handleCheckboxChange = (index: number, checked: boolean) => {
+    const formState = getCurrentFormState();
+    const updatedEstimates = [...formState.estimates];
+    updatedEstimates[index] = {
+      ...updatedEstimates[index],
+      is_selected: checked
+    };
+    updateCurrentFormState({ estimates: updatedEstimates });
+  };
+
+  const handleBuyerEmailCheckboxChange = (email: string, checked: boolean) => {
+    const formState = getCurrentFormState();
+    const updatedSelection = new Set(formState.selectedBuyerEmails);
+    
+    if (checked) {
+      updatedSelection.add(email);
+    } else {
+      updatedSelection.delete(email);
+    }
+    
+    updateCurrentFormState({ selectedBuyerEmails: updatedSelection });
+  };
+
+  const handleCloneToOtherCompanies = () => {
+    const currentCompanyId = getCurrentCompanyId();
+    if (!currentCompanyId) return;
+
+    const currentState = getCurrentFormState();
+    
+    // Get all other selected company IDs (excluding current)
+    const otherCompanyIds = [...new Set(
+      selectedBuyers
+        .map(buyerId => buyers.find(b => b.id === buyerId))
+        .filter(buyer => buyer !== undefined && buyer.company_id !== currentCompanyId)
+        .map(buyer => buyer!.company_id)
+    )];
+
+    if (otherCompanyIds.length === 0) {
+      alert('No other companies selected to clone to.');
+      return;
+    }
+
+    // Get company names with better handling
+    const companyNames = [...new Set(otherCompanyIds)]
+      .map(id => {
+        const buyer = buyers.find(b => b.company_id === id);
+        return buyer?.company_name || `Company ID ${id}`;
+      })
+      .join(', ');
+    
+    const confirmClone = window.confirm(
+      `Clone current selections to:\n${companyNames}\n\nThis will copy vendors, ports, date range, delivery dates, margins, and quote selections.`
+    );
+    
+    if (!confirmClone) return;
+
+    // Clone the form state to other companies
+    setCompanyFormState(prev => {
+      const updated = { ...prev };
+      
+      otherCompanyIds.forEach(companyId => {
+        const existingState = updated[companyId] || {
+          selectedVendors: [],
+          selectedPorts: [],
+          dateRange: 'This Week',
+          deliveryDateFrom: '',
+          deliveryDateTo: '',
+          buyerEmails: [],
+          selectedBuyerEmails: new Set(),
+          estimates: []
+        };
+        
+        // Deep clone estimates to preserve margins and selections
+        const clonedEstimates = currentState.estimates.map(estimate => ({
+          ...estimate,
+          // Preserve margin and is_selected from current state
+          margin: estimate.margin,
+          is_selected: estimate.is_selected
+        }));
+        
+        // Clone form selections including estimates with margins and selections
+        updated[companyId] = {
+          ...existingState,
+          selectedVendors: [...currentState.selectedVendors],
+          selectedPorts: [...currentState.selectedPorts],
+          dateRange: currentState.dateRange,
+          deliveryDateFrom: currentState.deliveryDateFrom,
+          deliveryDateTo: currentState.deliveryDateTo,
+          // Keep existing buyer emails
+          // Clone estimates with margins and selections
+          estimates: clonedEstimates
+        };
+      });
+      
+      return updated;
+    });
+
+    alert(`Selections cloned to ${otherCompanyIds.length} other ${otherCompanyIds.length === 1 ? 'company' : 'companies'}!`);
+  };
+
+  // Get current form state for rendering
+  const currentFormState = getCurrentFormState();
+  const selectedPorts = currentFormState.selectedPorts;
+  const selectedVendors = currentFormState.selectedVendors;
+  const dateRange = currentFormState.dateRange;
+  const buyerEmails = currentFormState.buyerEmails;
+  const selectedBuyerEmails = currentFormState.selectedBuyerEmails;
+  const estimates = currentFormState.estimates;
+
+  return (
+    <div className="w-full min-h-screen p-4 bg-gray-50">
+      <div className="w-full bg-white shadow-md rounded-lg space-y-4">
+      {/* Main Tabs - Buyer Pricing / Clearing Pricing */}
+      <div className="border-b-2 border-gray-200 px-4 pt-4">
+        <div className="flex space-x-1">
+          <button
+            onClick={() => setMainTab('buyer-pricing')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              mainTab === 'buyer-pricing'
+                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            Buyer Pricing
+          </button>
+          <button
+            onClick={() => setMainTab('clearing-pricing')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              mainTab === 'clearing-pricing'
+                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            Clearing Pricing
+          </button>
+          <button
+            onClick={() => setMainTab('summary')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              mainTab === 'summary'
+                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            Summary
+          </button>
+        </div>
+      </div>
+
+      {/* Buyer Pricing Tab Content */}
+      {mainTab === 'buyer-pricing' && (
+      <div className="grid grid-cols-12 gap-6 p-4">
+        {/* Left Sidebar - Buyer List */}
+        <div className="col-span-2 border-r pr-4 py-2">
+          <div className="mb-4">
+            <input
+              type="text"
+              placeholder="Search"
+              value={buyerSearch}
+              onChange={(e) => setBuyerSearch(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {filteredCompanies.map((company) => {
+              const allBuyersSelected = company.buyers.every(b => selectedBuyers.includes(b.id));
+                return (
+                  <label key={company.company_id} className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-2 rounded">
+                    <input
+                      type="checkbox"
+                      checked={allBuyersSelected}
+                      onChange={() => toggleCompanySelection(company.company_id)}
+                      className="w-4 h-4 text-blue-600"
+                    />
+                    <span className="text-sm font-medium">
+                      {company.company_name}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div className="col-span-10">
+            {/* Tabs */}
+            <div className="border-b mb-4">
+              <div className="flex space-x-4">
+                {/* Get unique companies from selected buyers */}
+                {[...new Set(
+                  selectedBuyers
+                    .map(buyerId => buyers.find(b => b.id === buyerId))
+                    .filter(buyer => buyer !== undefined)
+                    .map(buyer => buyer!.company_id)
+                )].map(companyId => {
+                  const buyer = buyers.find(b => b.company_id === companyId);
+                  const isActive = buyers.find(b => b.id === selectedCustomerTab)?.company_id === companyId;
+                  
+                  return (
+                    <div
+                      key={companyId}
+                      className={`flex items-center px-4 py-2 -mb-px cursor-pointer group ${
+                        isActive
+                          ? 'border-b-2 border-blue-500 text-blue-600 font-medium'
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                      onClick={() => {
+                        // Set the first buyer of this company as the active tab
+                        const firstBuyer = buyers.find(b => b.company_id === companyId && selectedBuyers.includes(b.id));
+                        if (firstBuyer) {
+                          handleCustomerTabClick(firstBuyer.id);
+                        }
+                      }}
+                    >
+                      <span>{buyer?.company_name}</span>
+                      <button
+                        onClick={(e) => handleCloseTab(companyId, e)}
+                        className="ml-2 text-gray-400 hover:text-red-500 focus:outline-none"
+                        title="Close tab"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {selectedCustomerTab && (
+              <div>
+                {/* Port and Date Range Filter */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-4">
+                    <label className="flex items-center space-x-2">
+                      <span className="font-medium">PORT:</span>
+                      <div className="relative port-dropdown">
+                        <button
+                          onClick={() => setShowPortDropdown(!showPortDropdown)}
+                          className="border border-gray-300 rounded-md px-3 py-2 min-w-[200px] text-left bg-white flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        >
+                          <span className="text-sm">
+                            {selectedPorts.length > 0 
+                              ? `${selectedPorts.length} selected: ${selectedPorts.join(', ')}`
+                              : 'Select ports...'}
+                          </span>
+                          <span className="ml-2">▼</span>
+                        </button>
+                        {showPortDropdown && (
+                          <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                            {ports.map(port => (
+                              <label key={port.id} className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedPorts.includes(port.code)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      updateCurrentFormState({ selectedPorts: [...selectedPorts, port.code] });
+                                    } else {
+                                      updateCurrentFormState({ selectedPorts: selectedPorts.filter((p: string) => p !== port.code) });
+                                    }
+                                  }}
+                                  className="mr-2"
+                                />
+                                <span className="text-sm">{port.code} - {port.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center space-x-4">
+                    <span className="font-medium">Range:</span>
+                    <select
+                      value={dateRange}
+                      onChange={(e) => updateCurrentFormState({ dateRange: e.target.value })}
+                      className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="This Week">This Week</option>
+                      <option value="Last Week">Last Week</option>
+                      <option value="This Month">This Month</option>
+                    </select>
+                    
+                    {/* Clone Button */}
+                    <button
+                      onClick={handleCloneToOtherCompanies}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm font-medium"
+                      title="Clone selections to other companies"
+                    >
+                      📋 Clone
+                    </button>
+                  </div>
+                </div>
+
+                {/* Buyer Emails Table */}
+                <div className="mb-4 border border-gray-300 rounded-md overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left border-b border-gray-300">Select</th>
+                        <th className="px-4 py-2 text-left border-b border-gray-300">Name</th>
+                        <th className="px-4 py-2 text-left border-b border-gray-300">Email</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {buyerEmails.map((buyer, idx) => (
+                        <tr key={idx} className="border-t border-gray-200">
+                          <td className="px-4 py-2">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4"
+                              checked={selectedBuyerEmails.has(buyer.email)}
+                              onChange={(e) => handleBuyerEmailCheckboxChange(buyer.email, e.target.checked)}
+                            />
+                          </td>
+                          <td className="px-4 py-2">{buyer.name}</td>
+                          <td className="px-4 py-2">{buyer.email}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Vendor Selection */}
+                <div className="mb-4">
+                  <label className="block mb-2 font-medium">Select Vendors:</label>
+                  <div className="relative vendor-dropdown">
+                    <button
+                      onClick={() => setShowVendorDropdown(!showVendorDropdown)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-left bg-white flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <span className="text-sm">
+                        {selectedVendors.length > 0 
+                          ? `${selectedVendors.length} vendor(s) selected: ${vendors.filter(v => selectedVendors.includes(v.id)).map(v => v.name).join(', ')}`
+                          : 'Select vendors...'}
+                      </span>
+                      <span className="ml-2">▼</span>
+                    </button>
+                    {showVendorDropdown && (
+                      <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                        {vendors.map(vendor => (
+                          <label key={vendor.id} className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedVendors.includes(vendor.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  updateCurrentFormState({ selectedVendors: [...selectedVendors, vendor.id] });
+                                } else {
+                                  updateCurrentFormState({ selectedVendors: selectedVendors.filter((v: number) => v !== vendor.id) });
+                                }
+                              }}
+                              className="mr-2"
+                            />
+                            <span className="text-sm">{vendor.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Estimates Table */}
+                <div className="border border-gray-300 rounded-md mb-4 overflow-hidden">
+                  <div className="font-medium px-4 py-2 bg-gray-50 border-b border-gray-300 flex items-center justify-between">
+                    <span>Vendor Quotes</span>
+                    <div className="flex items-center space-x-3">
+                      <label className="flex items-center space-x-2 text-sm font-normal">
+                        <span>Delivery From:</span>
+                        <input
+                          type="date"
+                          value={currentFormState.deliveryDateFrom}
+                          onChange={(e) => updateCurrentFormState({ deliveryDateFrom: e.target.value })}
+                          className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        {currentFormState.deliveryDateFrom && (
+                          <span className="text-xs text-blue-600">
+                            ({formatDateWithDay(currentFormState.deliveryDateFrom).split(',')[0]})
+                          </span>
+                        )}
+                      </label>
+                      <label className="flex items-center space-x-2 text-sm font-normal">
+                        <span>To:</span>
+                        <input
+                          type="date"
+                          value={currentFormState.deliveryDateTo}
+                          onChange={(e) => updateCurrentFormState({ deliveryDateTo: e.target.value })}
+                          className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        {currentFormState.deliveryDateTo && (
+                          <span className="text-xs text-blue-600">
+                            ({formatDateWithDay(currentFormState.deliveryDateTo).split(',')[0]})
+                          </span>
+                        )}
+                      </label>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Quote#</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Quote Date</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Port</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Common Name</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Scientific Name</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Cut</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Grade</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Size (LBS)</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Fish Price</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Margin</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Freight Price</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Tariff %</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Total</th>
+                          <th className="px-4 py-2 text-left border-b border-gray-300">Select</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          // Group estimates by vendor
+                          const groupedByVendor: Record<string, Estimate[]> = {};
+                          estimates.forEach(estimate => {
+                            if (!groupedByVendor[estimate.vendor_name]) {
+                              groupedByVendor[estimate.vendor_name] = [];
+                            }
+                            groupedByVendor[estimate.vendor_name].push(estimate);
+                          });
+
+                          // Render grouped rows with vendor headers
+                          return Object.entries(groupedByVendor).map(([vendorName, vendorEstimates]) => (
+                            <React.Fragment key={vendorName}>
+                              {/* Vendor Name Header Row */}
+                              <tr className="bg-blue-50 border-t-2 border-blue-200">
+                                <td colSpan={14} className="px-4 py-2 font-semibold text-blue-900">
+                                  {vendorName}
+                                </td>
+                              </tr>
+                              {/* Vendor's Quotes */}
+                              {vendorEstimates.map((estimate) => {
+                                const globalIdx = estimates.indexOf(estimate);
+                                return (
+                                  <tr key={globalIdx} className="border-t border-gray-200 hover:bg-gray-50">
+                                    <td className="px-4 py-2">{estimate.quote_id}</td>
+                                    <td className="px-4 py-2">{estimate.quote_date}</td>
+                                    <td className="px-4 py-2">{estimate.port}</td>
+                                    <td className="px-4 py-2">{estimate.common_name}</td>
+                                    <td className="px-4 py-2 italic text-gray-600">{estimate.scientific_name}</td>
+                                    <td className="px-4 py-2">{estimate.cut}</td>
+                                    <td className="px-4 py-2">{estimate.grade}</td>
+                                    <td className="px-4 py-2">
+                                      <input
+                                        type="text"
+                                        value={estimate.fish_size || ''}
+                                        onChange={(e) => handleSizeChange(globalIdx, e.target.value)}
+                                        placeholder="Enter size"
+                                        className="w-24 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                      />
+                                    </td>
+                                    <td className="px-4 py-2">${estimate.fish_price.toFixed(2)}</td>
+                                    <td className="px-4 py-2">
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        value={estimate.margin}
+                                        onChange={(e) => handleMarginChange(globalIdx, e.target.value)}
+                                        className="w-20 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                      />
+                                    </td>
+                                    <td className="px-4 py-2">${estimate.freight_price.toFixed(2)}</td>
+                                    <td className="px-4 py-2">{estimate.tariff_percent}%</td>
+                                    <td className="px-4 py-2 font-semibold">${estimate.total_price.toFixed(2)}</td>
+                                    <td className="px-4 py-2">
+                                      <input 
+                                        type="checkbox" 
+                                        className="w-4 h-4"
+                                        checked={estimate.is_selected || false}
+                                        onChange={(e) => handleCheckboxChange(globalIdx, e.target.checked)}
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          ));
+                        })()}
+                        {estimates.length === 0 && (
+                          <tr>
+                            <td colSpan={14} className="px-4 py-8 text-center text-gray-500">
+                              {loading ? 'Loading...' : 'Select vendors and click search to see estimates'}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Save Estimate Button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveEstimate}
+                    disabled={loading || estimates.length === 0}
+                    className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-400"
+                  >
+                    {loading ? 'Saving...' : 'Save Estimate'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!selectedCustomerTab && selectedBuyers.length > 0 && (
+              <div className="text-center text-gray-500 py-12">
+                Click on a customer tab above to view details
+              </div>
+            )}
+
+            {selectedBuyers.length === 0 && (
+              <div className="text-center text-gray-500 py-12">
+                Select customers from the left to begin
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Clearing Pricing Tab Content */}
+      {mainTab === 'clearing-pricing' && (
+        <ClearingPricingForm apiBaseUrl={apiBaseUrl} />
+      )}
+
+      {/* Summary Tab Content */}
+      {mainTab === 'summary' && (
+        <div className="p-6">
+          <h2 className="text-2xl font-bold mb-6">Estimate Summary</h2>
+          <SummaryTab companies={filteredCompanies} apiBaseUrl={apiBaseUrl} />
+        </div>
+      )}
+      </div>
+    </div>
+  );
+};
+
+export default BuyerPricingForm;
+
+
