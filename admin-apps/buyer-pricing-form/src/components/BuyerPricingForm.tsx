@@ -100,6 +100,9 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
   // Store form state per company
   const [companyFormState, setCompanyFormState] = useState<Record<number, CompanyFormState>>({});
 
+  // Collapsible sidebar
+  const [buyerPanelOpen, setBuyerPanelOpen] = useState(true);
+
   // Helper to get current company ID from selected tab
   const getCurrentCompanyId = (): number | null => {
     if (!selectedCustomerTab) return null;
@@ -827,9 +830,16 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
 
       {/* Buyer Pricing Tab Content */}
       {mainTab === 'buyer-pricing' && (
-      <div className="grid grid-cols-12 gap-6 p-4">
-        {/* Left Sidebar - Buyer List */}
-        <div className="col-span-2 border-r pr-4 py-2">
+      <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', padding: '16px' }}>
+        {/* Left Sidebar - Buyer List (collapsible) */}
+        <div style={{
+          width: buyerPanelOpen ? '220px' : '0px',
+          minWidth: buyerPanelOpen ? '220px' : '0px',
+          overflow: 'hidden',
+          transition: 'all 0.25s ease',
+          flexShrink: 0,
+        }}>
+          <div style={{ borderRight: '1px solid #e5e7eb', paddingRight: '16px', paddingTop: '8px', paddingBottom: '8px' }}>
           <div className="mb-4">
             <input
               type="text"
@@ -858,9 +868,32 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
               })}
             </div>
           </div>
+        </div>
 
           {/* Main Content */}
-          <div className="col-span-10">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Toggle button */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+              <button
+                onClick={() => setBuyerPanelOpen(prev => !prev)}
+                title={buyerPanelOpen ? 'Hide buyer list' : 'Show buyer list'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '5px 10px', backgroundColor: '#f1f5f9', border: '1px solid #e2e8f0',
+                  borderRadius: '6px', fontSize: '12px', fontWeight: 600, color: '#475569',
+                  cursor: 'pointer', transition: 'all 0.15s ease',
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {buyerPanelOpen
+                    ? <><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></>
+                    : <><path d="M13 7l5 5-5 5"/><path d="M6 7l5 5-5 5"/></>
+                  }
+                </svg>
+                {buyerPanelOpen ? 'Hide Buyers' : `Buyers (${filteredCompanies.length})`}
+              </button>
+            </div>
+
             {/* Tabs */}
             <div className="border-b mb-4">
               <div className="flex space-x-4">
@@ -1255,7 +1288,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
 
             {selectedBuyers.length === 0 && (
               <div className="text-center text-gray-500 py-12">
-                Select customers from the left to begin
+                {buyerPanelOpen ? 'Select customers from the left to begin' : 'Click "Buyers" to show customer list'}
               </div>
             )}
           </div>
