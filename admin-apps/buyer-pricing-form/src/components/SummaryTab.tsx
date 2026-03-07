@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PODialog from './PODialog';
 
 interface Company {
   company_id: number;
@@ -19,6 +20,8 @@ interface Estimate {
 }
 
 interface EstimateItem {
+  vendor_id: number;
+  quote_id?: number;
   fish_species_id: number;
   cut_id: number;
   grade_id: number;
@@ -49,6 +52,21 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   const [loading, setLoading] = useState(false);
   const [expandedEstimateIds, setExpandedEstimateIds] = useState<Set<number>>(new Set());
   const [sendingEstimateId, setSendingEstimateId] = useState<number | null>(null);
+  const [poEstimate, setPoEstimate] = useState<Estimate | null>(null);
+  // Track estimates that have at least one PO sent (set of estimate IDs)
+  const [poSentEstimateIds, setPoSentEstimateIds] = useState<Set<number>>(new Set());
+
+  const checkEstimatePOStatus = async (estimateId: number) => {
+    try {
+      const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/by-estimate/${estimateId}`);
+      const data = await resp.json();
+      if (data.success && data.purchase_orders && Object.keys(data.purchase_orders).length > 0) {
+        setPoSentEstimateIds((prev) => new Set([...prev, estimateId]));
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const fetchCompanyEstimates = async (companyId: number) => {
     setLoading(true);
@@ -56,7 +74,14 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
       const response = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/company/${companyId}?limit=5`);
       const data = await response.json();
       if (data.success) {
-        setEstimates(data.estimates || []);
+        const ests = data.estimates || [];
+        setEstimates(ests);
+        // Check PO status for all sent estimates
+        ests.forEach((est: Estimate) => {
+          if (est.status === 'sent') {
+            checkEstimatePOStatus(est.id);
+          }
+        });
       }
     } catch (error) {
       console.error('Error fetching company estimates:', error);
@@ -67,7 +92,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   };
 
   const handleSendEstimate = async (estimateId: number, estimateNumber: string) => {
-    if (!confirm(`Send estimate #${estimateNumber}? This will change the status to 'sent' and generate a PDF.`)) {
+    if (!confirm(`Send estimate #${estimateNumber}? This will email the estimate PDF to the buyer(s).`)) {
       return;
     }
 
@@ -83,7 +108,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
       const data = await response.json();
       
       if (data.success) {
-        alert(`Estimate sent successfully! PDF: ${data.pdf_filename}`);
+        alert(`Estimate #${data.estimate_number} sent successfully to ${data.buyer_emails?.join(', ')}`);
         // Refresh the estimates to show updated status
         if (selectedCompanyId) {
           fetchCompanyEstimates(selectedCompanyId);
@@ -102,6 +127,10 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   const handleCompanySelect = (companyId: number) => {
     setSelectedCompanyId(companyId);
     fetchCompanyEstimates(companyId);
+  };
+
+  const handleCreatePO = (estimate: Estimate) => {
+    setPoEstimate(estimate);
   };
 
   const toggleEstimateExpansion = (estimateId: number) => {
@@ -249,6 +278,22 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                         >
                           {sendingEstimateId === estimate.id ? 'Sending...' : 'Send'}
                         </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCreatePO(estimate);
+                          }}
+                          disabled={estimate.status !== 'sent'}
+                          className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                            estimate.status !== 'sent'
+                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              : poSentEstimateIds.has(estimate.id)
+                              ? 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200'
+                              : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          }`}
+                        >
+                          {poSentEstimateIds.has(estimate.id) ? '✓ PO Sent' : 'PO'}
+                        </button>
                         <svg 
                           className={`w-5 h-5 text-gray-400 transition-transform cursor-pointer ${isExpanded ? 'rotate-180' : ''}`}
                           fill="none" 
@@ -342,6 +387,19 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
           </div>
         )}
       </div>
+
+      {/* PO Dialog */}
+      {poEstimate && (
+        <PODialog
+          estimate={poEstimate}
+          apiBaseUrl={apiBaseUrl}
+          onClose={() => setPoEstimate(null)}
+          onPOSent={() => {
+            // Mark this estimate as having POs
+            setPoSentEstimateIds((prev) => new Set([...prev, poEstimate.id]));
+          }}
+        />
+      )}
     </div>
   );
 };
