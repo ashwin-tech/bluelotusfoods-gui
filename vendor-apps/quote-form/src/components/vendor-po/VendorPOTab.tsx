@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import BPLForm from './BPLForm';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -112,6 +112,7 @@ const S = {
   portHeader: {
     backgroundColor: '#f0f9ff', borderTop: '2px solid #0A3D5C',
     padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    flexWrap: 'wrap' as const, gap: '8px',
   } as React.CSSProperties,
   checkbox: { width: '16px', height: '16px', cursor: 'pointer', accentColor: '#0A3D5C' },
   bplBtnActive: {
@@ -147,6 +148,19 @@ const S = {
 };
 
 
+/* ─── Animations ────────────────────────────────── */
+const PO_ANIM_ID = 'po-tab-animations';
+if (typeof document !== 'undefined' && !document.getElementById(PO_ANIM_ID)) {
+  const style = document.createElement('style');
+  style.id = PO_ANIM_ID;
+  style.textContent = `
+    @keyframes poToastIn  { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes poToastOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-10px); } }
+    @keyframes poSpin     { to { transform: rotate(360deg); } }
+  `;
+  document.head.appendChild(style);
+}
+
 /* ─── Component ─────────────────────────────────── */
 
 const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
@@ -161,7 +175,21 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
   const [coveredItemIds, setCoveredItemIds] = useState<Set<number>>(new Set());
   const [bplsByPort, setBplsByPort] = useState<Map<string, ExistingBPL>>(new Map());
   const [bplFormOpen, setBplFormOpen] = useState<{ portCode: string; items: POItem[]; existing: ExistingBPL | null } | null>(null);
-  const [sendingBPL, setSendingBPL] = useState<string | null>(null); // port_code currently sending
+  const [sendingBPL, setSendingBPL] = useState<string | null>(null);
+
+  // Toast + confirmation state
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [confirmSend, setConfirmSend] = useState<string | null>(null);
+  const toastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Collapsible left panel
+  const [panelOpen, setPanelOpen] = useState(true);
+
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    if (toastTimeout.current) clearTimeout(toastTimeout.current);
+    toastTimeout.current = setTimeout(() => setToast(null), 4000);
+  }, []);
 
   /* ── Fetch PO list ── */
   const fetchPOs = useCallback(async () => {
@@ -215,6 +243,8 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
       console.error('Error fetching PO details:', err);
     } finally {
       setLoadingDetail(false);
+      // Auto-collapse panel on small screens after selecting a PO
+      if (window.innerWidth < 768) setPanelOpen(false);
     }
   };
 
@@ -240,7 +270,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
   /* ── Send BPL emails ── */
   const handleSendBPL = async (portCode: string) => {
     if (!selectedPO) return;
-    if (!confirm(`Send BPL emails for port ${portCode}?\n\nThis will email the Box Packaging List to the owner and vendor.`)) return;
+    setConfirmSend(null); // close confirmation
     setSendingBPL(portCode);
     try {
       const resp = await fetch(
@@ -249,14 +279,14 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
       );
       const data = await resp.json();
       if (resp.ok && data.success) {
-        alert('✅ BPL emails sent successfully!');
-        await refreshBPL();  // refresh to pick up 'sent' status
+        showToast('success', `BPL emails sent for port ${portCode}!`);
+        await refreshBPL();
       } else {
-        alert(`❌ Failed to send BPL emails: ${data.detail || data.message || 'Unknown error'}`);
+        showToast('error', `Failed to send: ${data.detail || data.message || 'Unknown error'}`);
       }
     } catch (err) {
       console.error('Error sending BPL emails:', err);
-      alert('❌ Network error — could not reach the server.');
+      showToast('error', 'Network error — could not reach the server.');
     } finally {
       setSendingBPL(null);
     }
@@ -309,13 +339,10 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
   const portGroups = selectedPO ? groupByPort(selectedPO.items) : new Map<string, POItem[]>();
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
-      <h2 className="text-xl font-bold mb-4" style={{ color: '#1f2937' }}>
-        Purchase Orders — {vendorName}
-      </h2>
+    <div className="max-w-7xl mx-auto p-4 sm:p-6">
 
       {/* Week Navigation */}
-      <div className="flex items-center space-x-3 mb-6 bg-white rounded-lg border border-gray-200 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 sm:space-x-3 mb-6 bg-white rounded-lg border border-gray-200 px-3 sm:px-4 py-3">
         <button onClick={goToPrevWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors text-gray-600" title="Previous week">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
@@ -330,9 +357,16 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
       </div>
 
       {/* Main Layout */}
-      <div className="grid grid-cols-12 gap-6">
-        {/* Left Panel — PO List */}
-        <div className="col-span-4">
+      <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+
+        {/* Left Panel — PO List (collapsible) */}
+        <div style={{
+          width: panelOpen ? '300px' : '0px',
+          minWidth: panelOpen ? '300px' : '0px',
+          overflow: 'hidden',
+          transition: 'all 0.25s ease',
+          flexShrink: 0,
+        }}>
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {loadingList && <div className="px-4 py-8 text-center text-gray-400 text-sm">Loading…</div>}
             {!loadingList && purchaseOrders.length === 0 && <div className="px-4 py-8 text-center text-gray-400 text-sm">No purchase orders this week</div>}
@@ -360,10 +394,37 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
         </div>
 
         {/* Right Panel — PO Detail with BPL */}
-        <div className="col-span-8">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Toggle button row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+            <button
+              onClick={() => setPanelOpen(prev => !prev)}
+              title={panelOpen ? 'Hide PO list' : 'Show PO list'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', backgroundColor: '#f1f5f9', border: '1px solid #e2e8f0',
+                borderRadius: '6px', fontSize: '12px', fontWeight: 600, color: '#475569',
+                cursor: 'pointer', transition: 'all 0.15s ease',
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {panelOpen
+                  ? <><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></>
+                  : <><path d="M13 7l5 5-5 5"/><path d="M6 7l5 5-5 5"/></>
+                }
+              </svg>
+              {panelOpen ? 'Hide List' : `PO List (${purchaseOrders.length})`}
+            </button>
+            {!panelOpen && selectedPO && (
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
+                {selectedPO.po_number}
+              </span>
+            )}
+          </div>
+
           {!selectedPO && !loadingDetail && (
             <div className="bg-white rounded-lg border border-gray-200 px-6 py-16 text-center text-gray-400">
-              Select a purchase order to view details
+              {panelOpen ? 'Select a purchase order to view details' : 'Click "PO List" to select a purchase order'}
             </div>
           )}
 
@@ -449,9 +510,14 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
                                   <button
                                     style={sendingBPL === port ? S.bplBtnSending : S.bplBtnSend}
                                     disabled={sendingBPL === port}
-                                    onClick={() => handleSendBPL(port)}
+                                    onClick={() => setConfirmSend(port)}
                                   >
-                                    {sendingBPL === port ? '⏳ Sending…' : '📧 Send BPL'}
+                                    {sendingBPL === port ? (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid #d1d5db', borderTopColor: '#059669', borderRadius: '50%', animation: 'poSpin 0.6s linear infinite' }} />
+                                        Sending…
+                                      </span>
+                                    ) : '📧 Send BPL'}
                                   </button>
                                 )}
                               </>
@@ -470,7 +536,8 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
                       </div>
 
                       {/* Items table */}
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '700px' }}>
                         <thead style={{ backgroundColor: '#0A3D5C' }}>
                           <tr>
                             <th style={{ ...S.th('left'), width: '36px' }}></th>
@@ -522,6 +589,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
                           })}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   );
                 })}
@@ -553,6 +621,58 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
           onClose={() => setBplFormOpen(null)}
           onSaved={refreshBPL}
         />
+      )}
+
+      {/* ── Inline Toast ── */}
+      {toast && (
+        <div style={{
+          position: 'fixed', top: '20px', right: '20px', zIndex: 100,
+          padding: '14px 20px', borderRadius: '10px', fontSize: '14px', fontWeight: 600,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          display: 'flex', alignItems: 'center', gap: '10px',
+          animation: 'poToastIn 0.3s ease-out',
+          backgroundColor: toast.type === 'success' ? '#ecfdf5' : '#fef2f2',
+          color: toast.type === 'success' ? '#065f46' : '#dc2626',
+          border: `1px solid ${toast.type === 'success' ? '#a7f3d0' : '#fecaca'}`,
+        }}>
+          <span style={{ fontSize: '18px' }}>{toast.type === 'success' ? '✅' : '❌'}</span>
+          {toast.message}
+          <button
+            onClick={() => setToast(null)}
+            style={{ marginLeft: '8px', background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: 'inherit', lineHeight: 1 }}
+          >×</button>
+        </div>
+      )}
+
+      {/* ── Send Confirmation Dialog ── */}
+      {confirmSend && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60,
+        }} onClick={() => setConfirmSend(null)}>
+          <div style={{
+            backgroundColor: '#fff', borderRadius: '12px', padding: '28px 32px',
+            maxWidth: '400px', width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            animation: 'poToastIn 0.2s ease-out',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+              📧 Send BPL Emails?
+            </div>
+            <p style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.5, margin: '0 0 20px' }}>
+              This will email the Box Packaging List for port <strong>{confirmSend}</strong> to both the owner and vendor.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setConfirmSend(null)}
+                style={{ padding: '8px 20px', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                onClick={() => handleSendBPL(confirmSend)}
+                style={{ padding: '8px 20px', backgroundColor: '#059669', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >Yes, Send</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

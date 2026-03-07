@@ -56,6 +56,9 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   // Track estimates that have at least one PO sent (set of estimate IDs)
   const [poSentEstimateIds, setPoSentEstimateIds] = useState<Set<number>>(new Set());
 
+  // Collapsible sidebar
+  const [companyPanelOpen, setCompanyPanelOpen] = useState(true);
+
   const checkEstimatePOStatus = async (estimateId: number) => {
     try {
       const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/by-estimate/${estimateId}`);
@@ -173,32 +176,62 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   };
 
   return (
-    <div className="grid grid-cols-12 gap-6">
-      {/* Company List */}
-      <div className="col-span-3">
-        <h3 className="text-lg font-semibold mb-4">Companies</h3>
-        <div className="space-y-2">
-          {companies.map((company) => (
-            <button
-              key={company.company_id}
-              onClick={() => handleCompanySelect(company.company_id)}
-              className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                selectedCompanyId === company.company_id
-                  ? 'bg-blue-100 text-blue-800 font-medium'
-                  : 'bg-gray-50 hover:bg-gray-100'
-              }`}
-            >
-              {company.company_name}
-            </button>
-          ))}
+    <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+      {/* Company List (collapsible) */}
+      <div style={{
+        width: companyPanelOpen ? '220px' : '0px',
+        minWidth: companyPanelOpen ? '220px' : '0px',
+        overflow: 'hidden',
+        transition: 'all 0.25s ease',
+        flexShrink: 0,
+      }}>
+        <div style={{ borderRight: '1px solid #e5e7eb', paddingRight: '16px', paddingTop: '8px', paddingBottom: '8px' }}>
+          <h3 className="text-lg font-semibold mb-4">Companies</h3>
+          <div className="space-y-2">
+            {companies.map((company) => (
+              <button
+                key={company.company_id}
+                onClick={() => handleCompanySelect(company.company_id)}
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
+                  selectedCompanyId === company.company_id
+                    ? 'bg-blue-100 text-blue-800 font-medium'
+                    : 'bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
+                {company.company_name}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Estimates Display */}
-      <div className="col-span-9">
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Toggle button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+          <button
+            onClick={() => setCompanyPanelOpen(prev => !prev)}
+            title={companyPanelOpen ? 'Hide company list' : 'Show company list'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              padding: '5px 10px', backgroundColor: '#f1f5f9', border: '1px solid #e2e8f0',
+              borderRadius: '6px', fontSize: '12px', fontWeight: 600, color: '#475569',
+              cursor: 'pointer', transition: 'all 0.15s ease',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {companyPanelOpen
+                ? <><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></>
+                : <><path d="M13 7l5 5-5 5"/><path d="M6 7l5 5-5 5"/></>
+              }
+            </svg>
+            {companyPanelOpen ? 'Hide Companies' : `Companies (${companies.length})`}
+          </button>
+        </div>
+
         {!selectedCompanyId && (
           <div className="text-center text-gray-500 py-12">
-            Select a company to view recent estimates
+            {companyPanelOpen ? 'Select a company to view recent estimates' : 'Click "Companies" to show company list'}
           </div>
         )}
 

@@ -7,14 +7,8 @@ interface FormData {
 }
 import VendorQuoteForm from "../components/vendor-quote/VendorQuoteForm";
 import VendorPOTab from "../components/vendor-po/VendorPOTab";
-
-interface Vendor {
-  id: number;
-  code: string;
-  name: string;
-  country: string;
-  nextQuoteId: number;
-}
+// Resolve logo with import.meta.url so Vite/Rollup produces a proper URL in production
+const logoSrc = new URL('../Logo/BLF-Logo.png', import.meta.url).href;
 
 export default function FetchVendor() {
   const { vendorCode } = useParams<{ vendorCode: string }>();
@@ -54,54 +48,117 @@ export default function FetchVendor() {
   const [activeTab, setActiveTab] = useState<'quote' | 'po'>('quote');
 
   if (!formData) {
-    return <div>Loading...</div>;
+    return (
+      <div style={{
+        minHeight: '100vh', backgroundColor: '#f1f5f9',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px',
+      }}>
+        <img src={logoSrc} alt="Blue Lotus Foods" style={{ height: '48px', opacity: 0.8 }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+        <div style={{ color: '#0A3D5C', fontSize: '14px', fontWeight: 500 }}>Loading vendor data…</div>
+      </div>
+    );
   }
 
   return (
-    <div className="w-full min-h-screen p-4 bg-gray-50">
-      <div className="w-full bg-white shadow-md rounded-lg">
-        {/* Tab Navigation */}
-        <div className="border-b-2 border-gray-200 px-4 pt-4">
-          <div className="flex space-x-1">
-            <button
-              onClick={() => setActiveTab('quote')}
-              className={`px-6 py-3 font-medium transition-colors ${
-                activeTab === 'quote'
-                  ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Quote
-            </button>
-            <button
-              onClick={() => setActiveTab('po')}
-              className={`px-6 py-3 font-medium transition-colors ${
-                activeTab === 'po'
-                  ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Purchase Orders
-            </button>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f1f5f9' }}>
+      {/* ── Branded Header ── */}
+      <header style={{
+        background: 'linear-gradient(135deg, #0A3D5C 0%, #0d4f75 50%, #0A3D5C 100%)',
+        padding: '0 16px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
+        position: 'sticky', top: 0, zIndex: 40,
+        height: '60px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <img
+            src={logoSrc}
+            alt="Blue Lotus Foods"
+            style={{ height: '38px', objectFit: 'contain' }}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+          <div>
+            <div style={{ color: '#fff', fontSize: '16px', fontWeight: 700, letterSpacing: '0.3px', lineHeight: 1.2 }}>
+              Blue Lotus Foods
+            </div>
+            <div style={{ color: '#93c5fd', fontSize: '11px', fontWeight: 500, letterSpacing: '0.5px' }}>
+              VENDOR APPLICATION
+            </div>
           </div>
         </div>
 
-        {/* Tab Content */}
-        {activeTab === 'quote' && (
-          <VendorQuoteForm
-            initialVendorName={formData.vendorName}
-            initialCountry={formData.countryOfOrigin}
-            nextQuoteId={nextQuoteId ?? undefined}
-          />
-        )}
+        {/* Center — Tab Navigation */}
+        <div style={{ display: 'flex', gap: '4px' }}>
+          {(['quote', 'po'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: '8px 20px',
+                fontSize: '13px',
+                fontWeight: activeTab === tab ? 700 : 500,
+                color: activeTab === tab ? '#fff' : 'rgba(255,255,255,0.6)',
+                backgroundColor: activeTab === tab ? 'rgba(255,255,255,0.15)' : 'transparent',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                letterSpacing: '0.2px',
+              }}
+            >
+              {tab === 'quote' ? '📝 Quote' : '📦 Purchase Orders'}
+            </button>
+          ))}
+        </div>
 
-        {activeTab === 'po' && vendorId && (
-          <VendorPOTab
-            vendorId={vendorId}
-            vendorName={formData.vendorName}
-          />
+        {formData && (
+          <div style={{
+            backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '8px',
+            padding: '6px 14px',
+          }}>
+            <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600, lineHeight: 1.2 }}>
+              {formData.vendorName}
+            </div>
+            <div style={{ color: '#93c5fd', fontSize: '10px' }}>
+              {formData.countryOfOrigin}
+            </div>
+          </div>
         )}
+      </header>
+
+      {/* ── Main Content ── */}
+      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '16px 12px' }}>
+        <div style={{
+          backgroundColor: '#fff', borderRadius: '12px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)',
+          overflow: 'hidden',
+        }}>
+          {/* Tab Content */}
+          {activeTab === 'quote' && (
+            <VendorQuoteForm
+              initialVendorName={formData.vendorName}
+              initialCountry={formData.countryOfOrigin}
+              nextQuoteId={nextQuoteId ?? undefined}
+            />
+          )}
+
+          {activeTab === 'po' && vendorId && (
+            <VendorPOTab
+              vendorId={vendorId}
+              vendorName={formData.vendorName}
+            />
+          )}
+        </div>
       </div>
+
+      {/* ── Footer ── */}
+      <footer style={{
+        textAlign: 'center', padding: '16px 12px',
+        fontSize: '12px', color: '#94a3b8',
+      }}>
+        © Blue Lotus Foods LLC. All rights reserved.
+      </footer>
     </div>
   );
 }

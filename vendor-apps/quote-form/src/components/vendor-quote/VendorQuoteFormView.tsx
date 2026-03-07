@@ -58,9 +58,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
   const someSizesSelected = formData.sizes.some((s) => s.selected);
 
   return (
-    <div className="max-w-7xl mx-auto p-6 bg-white shadow-md rounded-2xl space-y-6">
-      <h1 className="text-2xl font-bold mb-4"> Vendor Quote Entry</h1>
-      
+    <div className="max-w-7xl mx-auto p-6 bg-white rounded-2xl space-y-6">
       {/* Error Display */}
       {submitError && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">

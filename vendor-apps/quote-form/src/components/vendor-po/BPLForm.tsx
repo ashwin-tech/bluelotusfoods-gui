@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -72,23 +72,27 @@ const S: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+    padding: '8px',
+    animation: 'bplFadeIn 0.2s ease-out',
   },
   modal: {
-    backgroundColor: '#fff', borderRadius: '12px', width: '90vw', maxWidth: '900px',
-    maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+    backgroundColor: '#fff', borderRadius: '12px', width: '100%', maxWidth: '900px',
+    maxHeight: '90vh', display: 'flex', flexDirection: 'column',
     boxShadow: '0 25px 50px rgba(0,0,0,0.25)',
+    animation: 'bplSlideUp 0.25s ease-out',
   },
   header: {
-    padding: '16px 24px', borderBottom: '1px solid #e5e7eb',
+    padding: '14px 16px', borderBottom: '1px solid #e5e7eb',
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#0A3D5C', borderTopLeftRadius: '12px', borderTopRightRadius: '12px',
   },
-  headerTitle: { color: '#ffffff', fontSize: '16px', fontWeight: 700, margin: 0 },
+  headerTitle: { color: '#ffffff', fontSize: '15px', fontWeight: 700, margin: 0 },
   headerSub: { color: '#93c5fd', fontSize: '12px', marginTop: '2px' },
-  body: { padding: '20px 24px', overflowY: 'auto', flex: 1 },
+  body: { padding: '16px', overflowY: 'auto', flex: 1, WebkitOverflowScrolling: 'touch' },
   footer: {
-    padding: '14px 24px', borderTop: '1px solid #e5e7eb',
-    display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: '#f9fafb',
+    padding: '12px 16px', borderTop: '1px solid #e5e7eb',
+    display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap',
+    backgroundColor: '#f9fafb',
     borderBottomLeftRadius: '12px', borderBottomRightRadius: '12px',
   },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '13px' },
@@ -155,6 +159,20 @@ const badgeStyles = {
   completed: { backgroundColor: '#d1fae5', color: '#065f46', padding: '2px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 600 } as React.CSSProperties,
 };
 
+/* ─── Animation style tag (injected once) ──────── */
+const ANIM_ID = 'bpl-form-animations';
+if (typeof document !== 'undefined' && !document.getElementById(ANIM_ID)) {
+  const style = document.createElement('style');
+  style.id = ANIM_ID;
+  style.textContent = `
+    @keyframes bplFadeIn   { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes bplSlideUp  { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes bplToastIn  { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes bplSpin     { to { transform: rotate(360deg); } }
+  `;
+  document.head.appendChild(style);
+}
+
 
 /* ─── Helpers ───────────────────────────────────── */
 
@@ -179,7 +197,11 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
   const [expiryDate, setExpiryDate] = useState('');
   const [boxEntries, setBoxEntries] = useState<BoxEntry[]>([]);
   const [saving, setSaving] = useState(false);
+  const [savingType, setSavingType] = useState<'draft' | 'completed' | null>(null);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const errorRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   /* ── init from existing or defaults ── */
   useEffect(() => {
@@ -210,6 +232,13 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
       })));
     }
   }, [existingBPL, selectedItems]);
+
+  /* ── scroll to error when set ── */
+  useEffect(() => {
+    if (error && errorRef.current) {
+      errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [error]);
 
   /* ── state helpers ── */
 
@@ -276,7 +305,9 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
     const err = validate();
     if (err) { setError(err); return; }
     setError('');
+    setSuccessMsg('');
     setSaving(true);
+    setSavingType(status);
 
     try {
       const resp = await fetch(`${API_BASE_URL}/vendors/purchase-orders/bpl/save`, {
@@ -305,7 +336,12 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
       });
       const data = await resp.json();
       if (data.success) {
-        onSaved();
+        const msg = status === 'completed' ? '✓ BPL saved & completed!' : '💾 Draft saved!';
+        setSuccessMsg(msg);
+        // Scroll to top to show success
+        if (bodyRef.current) bodyRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        // Auto-close after a brief moment so user sees feedback
+        setTimeout(() => { onSaved(); }, 1200);
       } else {
         setError(data.detail || 'Failed to save');
       }
@@ -313,6 +349,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
       setError(e.message || 'Network error');
     } finally {
       setSaving(false);
+      setSavingType(null);
     }
   };
 
@@ -344,11 +381,24 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
         </div>
 
         {/* Body */}
-        <div style={S.body}>
+        <div ref={bodyRef} style={S.body}>
+
+          {/* ── Success toast ── */}
+          {successMsg && (
+            <div style={{
+              marginBottom: '14px', padding: '12px 16px',
+              backgroundColor: '#ecfdf5', color: '#065f46', borderRadius: '8px',
+              fontSize: '14px', fontWeight: 600, border: '1px solid #a7f3d0',
+              display: 'flex', alignItems: 'center', gap: '8px',
+              animation: 'bplToastIn 0.3s ease-out',
+            }}>
+              <span style={{ fontSize: '20px' }}>✅</span> {successMsg}
+            </div>
+          )}
 
           {/* ── Shipment header fields ── */}
           <div style={{
-            display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px',
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px',
             marginBottom: '18px', padding: '14px 16px',
             backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px',
           }}>
@@ -401,7 +451,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
               <input
                 type="date"
                 value={packedDate}
-                onChange={e => setPackedDate(e.target.value)}
+                onChange={e => { setPackedDate(e.target.value); e.target.blur(); }}
                 style={{ width: '100%', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#000' }}
               />
             </div>
@@ -414,7 +464,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
               <input
                 type="date"
                 value={expiryDate}
-                onChange={e => setExpiryDate(e.target.value)}
+                onChange={e => { setExpiryDate(e.target.value); e.target.blur(); }}
                 style={{ width: '100%', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#000' }}
               />
             </div>
@@ -422,7 +472,8 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
 
           {/* Reference: selected PO items */}
           <div style={{ ...S.sectionTitle, marginTop: 0 }}>PO Items (reference)</div>
-          <table style={S.table}>
+          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table style={{ ...S.table, minWidth: '400px' }}>
             <thead>
               <tr>
                 <th style={S.th}>Fish</th>
@@ -444,6 +495,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
               ))}
             </tbody>
           </table>
+          </div>
 
           {/* Box entries grouped by PO item */}
           <div style={S.sectionTitle}>Box Details</div>
@@ -457,7 +509,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                 {/* Item sub-header */}
                 <div style={{
                   padding: '8px 12px', backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '4px',
                 }}>
                   <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
                     {item.fish_name} · {item.cut_name} · {item.grade_name}
@@ -469,7 +521,8 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                 </div>
 
                 {/* Boxes table */}
-                <table style={{ ...S.table, margin: 0 }}>
+                <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                <table style={{ ...S.table, margin: 0, minWidth: '500px' }}>
                   <thead>
                     <tr>
                       <th style={{ ...S.thCenter, width: '60px' }}>Box #</th>
@@ -487,10 +540,15 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                           {/* Box # */}
                           <td style={S.tdCenter}>
                             <input
-                              type="number"
-                              min={1}
-                              value={box.box_number}
-                              onChange={e => updateBoxNumber(box.key, parseInt(e.target.value) || 1)}
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={box.box_number || ''}
+                              onChange={e => {
+                                const v = e.target.value.replace(/[^0-9]/g, '');
+                                updateBoxNumber(box.key, v === '' ? 0 : parseInt(v));
+                              }}
+                              onBlur={() => { if (box.box_number < 1) updateBoxNumber(box.key, 1); }}
                               style={{ ...S.inputSmall, textAlign: 'center' }}
                             />
                           </td>
@@ -498,11 +556,14 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                           {/* # Pieces */}
                           <td style={S.tdCenter}>
                             <input
-                              type="number"
-                              min={1}
-                              max={50}
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
                               value={box.pieces.length}
-                              onChange={e => setNumPieces(box.key, parseInt(e.target.value) || 1)}
+                              onChange={e => {
+                                const v = e.target.value.replace(/[^0-9]/g, '');
+                                setNumPieces(box.key, v === '' ? 1 : parseInt(v));
+                              }}
                               style={{ ...S.inputSmall, textAlign: 'center' }}
                             />
                           </td>
@@ -516,11 +577,14 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                                     Pc{idx + 1}:
                                   </span>
                                   <input
-                                    type="number"
-                                    min={0}
-                                    step="0.1"
+                                    type="text"
+                                    inputMode="decimal"
+                                    pattern="[0-9]*\.?[0-9]*"
                                     value={pc.weight_kg}
-                                    onChange={e => updatePieceWeight(box.key, pc.key, e.target.value)}
+                                    onChange={e => {
+                                      const v = e.target.value.replace(/[^0-9.]/g, '');
+                                      updatePieceWeight(box.key, pc.key, v);
+                                    }}
                                     style={S.input}
                                     placeholder="0.00"
                                   />
@@ -545,6 +609,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                     })}
                   </tbody>
                 </table>
+                </div>
 
                 {/* Add box button */}
                 <div style={{ padding: '6px 12px', borderTop: '1px solid #e2e8f0' }}>
@@ -564,24 +629,40 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
           />
 
           {error && (
-            <div style={{
-              marginTop: '10px', padding: '8px 12px',
+            <div ref={errorRef} style={{
+              marginTop: '10px', padding: '10px 14px',
               backgroundColor: '#fef2f2', color: '#dc2626', borderRadius: '6px',
               fontSize: '13px', border: '1px solid #fecaca',
+              display: 'flex', alignItems: 'center', gap: '8px',
+              animation: 'bplToastIn 0.3s ease-out',
             }}>
-              {error}
+              <span style={{ fontSize: '16px' }}>⚠️</span> {error}
             </div>
           )}
         </div>
 
         {/* Footer */}
         <div style={S.footer}>
-          <button onClick={onClose} style={S.btnCancel}>Cancel</button>
-          <button onClick={() => doSave('draft')} disabled={saving} style={{ ...S.btnPrimary, opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Saving…' : '💾 Save Draft'}
+          <button onClick={onClose} style={S.btnCancel} disabled={saving || !!successMsg}>Cancel</button>
+          <button
+            onClick={() => doSave('draft')}
+            disabled={saving || !!successMsg}
+            style={{ ...S.btnPrimary, opacity: (saving || successMsg) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            {savingType === 'draft' && (
+              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
+            )}
+            {savingType === 'draft' ? 'Saving…' : '💾 Save Draft'}
           </button>
-          <button onClick={() => doSave('completed')} disabled={saving} style={{ ...S.btnSuccess, opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Saving…' : '✓ Save & Complete'}
+          <button
+            onClick={() => doSave('completed')}
+            disabled={saving || !!successMsg}
+            style={{ ...S.btnSuccess, opacity: (saving || successMsg) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            {savingType === 'completed' && (
+              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
+            )}
+            {savingType === 'completed' ? 'Saving…' : '✓ Save & Complete'}
           </button>
         </div>
       </div>
