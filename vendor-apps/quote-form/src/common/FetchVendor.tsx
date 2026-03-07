@@ -7,7 +7,8 @@ interface FormData {
 }
 import VendorQuoteForm from "../components/vendor-quote/VendorQuoteForm";
 import VendorPOTab from "../components/vendor-po/VendorPOTab";
-import logoSrc from "../Logo/BLF-Logo.png";
+// Resolve logo with import.meta.url so Vite/Rollup produces a proper URL in production
+const logoSrc = new URL('../Logo/BLF-Logo.png', import.meta.url).href;
 
 export default function FetchVendor() {
   const { vendorCode } = useParams<{ vendorCode: string }>();
