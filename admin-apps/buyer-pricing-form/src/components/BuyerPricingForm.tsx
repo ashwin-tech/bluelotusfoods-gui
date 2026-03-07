@@ -51,11 +51,13 @@ interface Estimate {
   grade_id: number;
   grade: string;
   fish_size?: string;  // Weight range from vendor quote (optional, editable)
+  offer_quantity: number;  // Weight in LBS
   fish_price: number;
   freight_price: number;
   tariff_percent: number;
   margin: number;
   tariff_amount: number;
+  clearing_charges: number;  // Clearing charges
   base_cost: number;
   total_price: number;
   is_selected?: boolean;  // Track checkbox selection
@@ -88,6 +90,13 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
   const [showPortDropdown, setShowPortDropdown] = useState(false);
   const [showVendorDropdown, setShowVendorDropdown] = useState(false);
   
+  // Expand/collapse state for vendor and quote groups
+  const [expandedVendors, setExpandedVendors] = useState<Set<string>>(new Set());
+  const [expandedQuotes, setExpandedQuotes] = useState<Set<string>>(new Set());
+  
+  // Store vendor-level margins (vendor name -> margin value)
+  const [vendorMargins, setVendorMargins] = useState<Record<string, number>>({});
+  
   // Store form state per company
   const [companyFormState, setCompanyFormState] = useState<Record<number, CompanyFormState>>({});
 
@@ -96,6 +105,63 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     if (!selectedCustomerTab) return null;
     const buyer = buyers.find(b => b.id === selectedCustomerTab);
     return buyer?.company_id ?? null;
+  };
+
+  // Toggle vendor expansion
+  const toggleVendor = (vendorName: string) => {
+    setExpandedVendors(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(vendorName)) {
+        newSet.delete(vendorName);
+      } else {
+        newSet.add(vendorName);
+      }
+      return newSet;
+    });
+  };
+
+  // Toggle quote expansion
+  const toggleQuote = (quoteKey: string) => {
+    setExpandedQuotes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(quoteKey)) {
+        newSet.delete(quoteKey);
+      } else {
+        newSet.add(quoteKey);
+      }
+      return newSet;
+    });
+  };
+
+  // Handle vendor-level margin change - apply to all products under this vendor
+  const handleVendorMarginChange = (vendorName: string, value: string) => {
+    const newMargin = parseFloat(value) || 0;
+    
+    // Update vendor margins state
+    setVendorMargins(prev => ({
+      ...prev,
+      [vendorName]: newMargin
+    }));
+    
+    // Apply margin to all estimates for this vendor
+    const formState = getCurrentFormState();
+    const updatedEstimates = formState.estimates.map(estimate => {
+      if (estimate.vendor_name === vendorName) {
+        // Recalculate total: ((Fish Price + Margin) + Tariff on (Fish Price + Margin)) + Freight Price
+        const fishPriceWithMargin = estimate.fish_price + newMargin;
+        const tariffAmount = (fishPriceWithMargin * estimate.tariff_percent) / 100;
+        const newTotal = fishPriceWithMargin + tariffAmount + estimate.freight_price;
+        
+        return {
+          ...estimate,
+          margin: newMargin,
+          total_price: newTotal
+        };
+      }
+      return estimate;
+    });
+    
+    updateCurrentFormState({ estimates: updatedEstimates });
   };
 
   // Helper to get current company's form state
@@ -508,6 +574,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                 const tier = clearingData.tiers[tierKey];
                 return {
                   vendor_id: estimate.vendor_id,
+                  quote_id: estimate.quote_id,
                   port_code: estimate.port,
                   fish_species_id: estimate.fish_species_id || 1,
                   cut_id: estimate.cut_id || 1,
@@ -1039,16 +1106,69 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                           });
 
                           // Render grouped rows with vendor headers
-                          return Object.entries(groupedByVendor).map(([vendorName, vendorEstimates]) => (
-                            <React.Fragment key={vendorName}>
-                              {/* Vendor Name Header Row */}
-                              <tr className="bg-blue-50 border-t-2 border-blue-200">
-                                <td colSpan={14} className="px-4 py-2 font-semibold text-blue-900">
-                                  {vendorName}
-                                </td>
-                              </tr>
-                              {/* Vendor's Quotes */}
-                              {vendorEstimates.map((estimate) => {
+                          return Object.entries(groupedByVendor).map(([vendorName, vendorEstimates]) => {
+                            const isVendorExpanded = expandedVendors.has(vendorName);
+                            
+                            // Group vendor's estimates by Quote# and Port
+                            const groupedByQuotePort: Record<string, Estimate[]> = {};
+                            vendorEstimates.forEach(estimate => {
+                              const key = `${estimate.quote_id}-${estimate.port}`;
+                              if (!groupedByQuotePort[key]) {
+                                groupedByQuotePort[key] = [];
+                              }
+                              groupedByQuotePort[key].push(estimate);
+                            });
+
+                            return (
+                              <React.Fragment key={vendorName}>
+                                {/* Vendor Name Header Row with expand/collapse */}
+                                <tr className="bg-blue-50 border-t-2 border-blue-200">
+                                  <td 
+                                    colSpan={1} 
+                                    className="px-4 py-2 cursor-pointer hover:text-blue-700"
+                                    onClick={() => toggleVendor(vendorName)}
+                                  >
+                                    <span className="inline-block w-4">{isVendorExpanded ? '▼' : '▶'}</span>
+                                  </td>
+                                  <td 
+                                    colSpan={8} 
+                                    className="px-4 py-2 font-semibold text-blue-900 cursor-pointer hover:text-blue-700"
+                                    onClick={() => toggleVendor(vendorName)}
+                                  >
+                                    {vendorName}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <div className="flex items-center">
+                                      <span className="mr-1">$</span>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        value={vendorMargins[vendorName] || 0}
+                                        onChange={(e) => handleVendorMarginChange(vendorName, e.target.value)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="w-16 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                        placeholder="0.00"
+                                      />
+                                    </div>
+                                  </td>
+                                  <td colSpan={5}></td>
+                                </tr>
+                                {/* Quote# and Port subgroups - only show if vendor is expanded */}
+                                {isVendorExpanded && Object.entries(groupedByQuotePort).map(([quotePortKey, quoteEstimates]) => {
+                                  const firstEstimate = quoteEstimates[0];
+                                  const isQuoteExpanded = expandedQuotes.has(quotePortKey);
+                                  
+                                  return (
+                                    <React.Fragment key={quotePortKey}>
+                                      {/* Quote# and Port Header Row with expand/collapse */}
+                                      <tr className="bg-gray-100 border-t border-gray-300 cursor-pointer hover:bg-gray-200" onClick={() => toggleQuote(quotePortKey)}>
+                                        <td colSpan={14} className="px-4 py-1.5 font-medium text-gray-700 text-sm">
+                                          <span className="inline-block w-4 mr-2">{isQuoteExpanded ? '▼' : '▶'}</span>
+                                          Quote# {firstEstimate.quote_id} | {firstEstimate.quote_date} | Port: {firstEstimate.port}
+                                        </td>
+                                      </tr>
+                                      {/* Quote's Products - only show if quote is expanded */}
+                                      {isQuoteExpanded && quoteEstimates.map((estimate) => {
                                 const globalIdx = estimates.indexOf(estimate);
                                 return (
                                   <tr key={globalIdx} className="border-t border-gray-200 hover:bg-gray-50">
@@ -1070,13 +1190,16 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                                     </td>
                                     <td className="px-4 py-2">${estimate.fish_price.toFixed(2)}</td>
                                     <td className="px-4 py-2">
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        value={estimate.margin}
-                                        onChange={(e) => handleMarginChange(globalIdx, e.target.value)}
-                                        className="w-20 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                      />
+                                      <div className="flex items-center">
+                                        <span className="mr-1">$</span>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          value={estimate.margin}
+                                          onChange={(e) => handleMarginChange(globalIdx, e.target.value)}
+                                          className="w-16 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                        />
+                                      </div>
                                     </td>
                                     <td className="px-4 py-2">${estimate.freight_price.toFixed(2)}</td>
                                     <td className="px-4 py-2">{estimate.tariff_percent}%</td>
@@ -1092,8 +1215,12 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                                   </tr>
                                 );
                               })}
-                            </React.Fragment>
-                          ));
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </React.Fragment>
+                            );
+                          });
                         })()}
                         {estimates.length === 0 && (
                           <tr>

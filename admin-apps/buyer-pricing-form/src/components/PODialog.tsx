@@ -1,0 +1,614 @@
+import React, { useEffect, useState } from 'react';
+
+interface EstimateItem {
+  vendor_id: number;
+  quote_id?: number;
+  vendor_name: string;
+  common_name: string;
+  scientific_name?: string;
+  cut_name: string;
+  grade_name: string;
+  fish_size?: string;
+  port_code: string;
+  offer_quantity: number;
+  fish_price: number;
+  margin: number;
+  freight_price: number;
+  tariff_percent: number;
+  clearing_charges: number;
+  total_price: number;
+}
+
+interface Estimate {
+  id: number;
+  estimate_number: string;
+  estimate_date: string;
+  delivery_date_from?: string;
+  delivery_date_to?: string;
+  status: string;
+  items?: EstimateItem[];
+}
+
+interface QuoteProduct {
+  fish_type: string;
+  cut_name: string;
+  grade_name: string;
+  weight_range: number | null;
+  price_per_kg: number;
+  quantity: number;
+}
+
+interface QuoteDestination {
+  destination: string;
+  destination_code: string;
+  airfreight_per_kg: number;
+  arrival_date: string;
+  min_weight: number;
+  max_weight: number;
+}
+
+interface VendorQuote {
+  quote_id: number;
+  vendor_id: number;
+  vendor_name: string;
+  vendor_code: string;
+  vendor_email: string;
+  country_of_origin: string;
+  quote_valid_till: string;
+  notes: string;
+  price_negotiable: boolean;
+  exclusive_offer: boolean;
+  quote_date: string;
+  products: QuoteProduct[];
+  destinations: QuoteDestination[];
+}
+
+interface PODialogProps {
+  estimate: Estimate;
+  apiBaseUrl: string;
+  onClose: () => void;
+  onPOSent?: () => void;
+}
+
+interface SentPO {
+  po_number: string;
+  status: string;
+  vendor_id: number;
+}
+
+interface VendorGroup {
+  vendor_id: number;
+  vendor_name: string;
+  quote_id: number | null;
+  estimateItems: EstimateItem[];
+  vendorQuote: VendorQuote | null;
+}
+
+// A single PO line = one estimate product+port combination, enriched with vendor quote data
+interface POLine {
+  fish_name: string;
+  cut_name: string;
+  grade_name: string;
+  fish_size: string;
+  port_code: string;
+  destination_name: string;
+  price_per_kg: number;
+  airfreight_per_kg: number;
+  arrival_date: string;
+}
+
+// Editable weight per PO line, keyed by "vendorId-lineIndex"
+type OrderWeights = Record<string, string>;
+
+const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPOSent }) => {
+  const [vendorGroups, setVendorGroups] = useState<VendorGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sendingVendorId, setSendingVendorId] = useState<number | null>(null);
+  const [expandedVendors, setExpandedVendors] = useState<Set<number>>(new Set());
+  const [orderWeights, setOrderWeights] = useState<OrderWeights>({});
+  // Track which vendors already have POs (keyed by vendor_id)
+  const [sentPOs, setSentPOs] = useState<Record<number, SentPO>>({});
+  // Editable delivery date range — defaults from estimate
+  const [deliveryDateFrom, setDeliveryDateFrom] = useState<string>(
+    estimate.delivery_date_from || ''
+  );
+  const [deliveryDateTo, setDeliveryDateTo] = useState<string>(
+    estimate.delivery_date_to || ''
+  );
+
+  useEffect(() => {
+    fetchVendorQuotes();
+  }, []);
+
+  const fetchVendorQuotes = async () => {
+    setLoading(true);
+
+    // Group estimate items by vendor
+    const grouped: Record<number, { vendor_id: number; vendor_name: string; quote_id: number | null; items: EstimateItem[] }> = {};
+    (estimate.items || []).forEach((item) => {
+      const vid = item.vendor_id;
+      if (!grouped[vid]) {
+        grouped[vid] = {
+          vendor_id: vid,
+          vendor_name: item.vendor_name,
+          quote_id: item.quote_id || null,
+          items: [],
+        };
+      }
+      grouped[vid].items.push(item);
+      // Use the first non-null quote_id found
+      if (!grouped[vid].quote_id && item.quote_id) {
+        grouped[vid].quote_id = item.quote_id;
+      }
+    });
+
+    // Collect unique quote_ids
+    const quoteIds = Object.values(grouped)
+      .map((g) => g.quote_id)
+      .filter((id): id is number => id !== null);
+
+    let quotesMap: Record<number, VendorQuote> = {};
+
+    if (quoteIds.length > 0) {
+      try {
+        const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/vendor-quotes-lookup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quote_ids: quoteIds }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          quotesMap = data.quotes || {};
+        }
+      } catch (err) {
+        console.error('Error fetching vendor quotes:', err);
+      }
+    }
+
+    // Build vendor groups
+    const groups: VendorGroup[] = Object.values(grouped).map((g) => ({
+      vendor_id: g.vendor_id,
+      vendor_name: g.vendor_name,
+      quote_id: g.quote_id,
+      estimateItems: g.items,
+      vendorQuote: g.quote_id && quotesMap[g.quote_id] ? quotesMap[g.quote_id] : null,
+    }));
+
+    // Sort by vendor name
+    groups.sort((a, b) => a.vendor_name.localeCompare(b.vendor_name));
+
+    setVendorGroups(groups);
+    // Expand all vendors by default
+    setExpandedVendors(new Set(groups.map((g) => g.vendor_id)));
+
+    // Fetch existing POs for this estimate to know which vendors already have POs
+    try {
+      const poResp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/by-estimate/${estimate.id}`);
+      const poData = await poResp.json();
+      if (poData.success && poData.purchase_orders) {
+        const existing: Record<number, SentPO> = {};
+        for (const [vid, po] of Object.entries(poData.purchase_orders)) {
+          const poObj = po as { po_number: string; status: string; vendor_id: number };
+          existing[Number(vid)] = { po_number: poObj.po_number, status: poObj.status, vendor_id: poObj.vendor_id };
+        }
+        setSentPOs(existing);
+      }
+    } catch (err) {
+      console.error('Error fetching existing POs:', err);
+    }
+
+    setLoading(false);
+  };
+
+  const toggleVendor = (vendorId: number) => {
+    setExpandedVendors((prev) => {
+      const next = new Set(prev);
+      if (next.has(vendorId)) next.delete(vendorId);
+      else next.add(vendorId);
+      return next;
+    });
+  };
+
+  const getWeightKey = (vendorId: number, lineIdx: number) => `${vendorId}-${lineIdx}`;
+
+  const handleWeightChange = (vendorId: number, lineIdx: number, value: string) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
+    setOrderWeights((prev) => ({
+      ...prev,
+      [getWeightKey(vendorId, lineIdx)]: value,
+    }));
+  };
+
+  /**
+   * Build PO lines from estimate items only (not all vendor quote products).
+   * Deduplicate by fish+cut+grade+port so the 3 clearing tiers collapse into one PO line.
+   * Pull original price/kg and available qty from the vendor quote product match.
+   * Pull freight from the vendor quote destination match.
+   */
+  const buildPOLines = (group: VendorGroup): POLine[] => {
+    const quote = group.vendorQuote;
+
+    // Build lookups from vendor quote
+    const destByCode: Record<string, QuoteDestination> = {};
+    const productLookup: Record<string, QuoteProduct> = {};
+
+    if (quote) {
+      quote.destinations.forEach((d) => {
+        destByCode[d.destination_code] = d;
+      });
+      // Key products by fish+cut+grade (lowercase for safe matching)
+      quote.products.forEach((p) => {
+        const key = `${p.fish_type.toLowerCase()}|${p.cut_name.toLowerCase()}|${p.grade_name.toLowerCase()}`;
+        productLookup[key] = p;
+      });
+    }
+
+    // Deduplicate estimate items by fish+cut+grade+port (collapse the 3 clearing tiers)
+    const seen = new Set<string>();
+    const lines: POLine[] = [];
+
+    group.estimateItems.forEach((item) => {
+      const dedupeKey = `${item.common_name}|${item.cut_name}|${item.grade_name}|${item.port_code}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+
+      // Match to vendor quote product
+      const matchKey = `${item.common_name.toLowerCase()}|${item.cut_name.toLowerCase()}|${item.grade_name.toLowerCase()}`;
+      const matchedProduct = productLookup[matchKey] || null;
+
+      // Match to vendor quote destination
+      const dest = destByCode[item.port_code] || null;
+
+      lines.push({
+        fish_name: item.common_name,
+        cut_name: item.cut_name,
+        grade_name: item.grade_name,
+        fish_size: item.fish_size || (matchedProduct?.weight_range != null ? String(matchedProduct.weight_range) : ''),
+        port_code: item.port_code,
+        destination_name: dest ? dest.destination : item.port_code,
+        price_per_kg: matchedProduct ? Number(matchedProduct.price_per_kg) : 0,
+        airfreight_per_kg: dest ? Number(dest.airfreight_per_kg) : 0,
+        arrival_date: dest ? dest.arrival_date : '',
+      });
+    });
+
+    // Sort by port_code then fish_name for grouped display
+    lines.sort((a, b) => {
+      const portCmp = a.port_code.localeCompare(b.port_code);
+      if (portCmp !== 0) return portCmp;
+      return a.fish_name.localeCompare(b.fish_name);
+    });
+
+    return lines;
+  };
+
+  const handleSendPO = async (group: VendorGroup) => {
+    const quote = group.vendorQuote;
+    if (!quote) {
+      alert('No linked vendor quote found.');
+      return;
+    }
+
+    const poLines = buildPOLines(group);
+    const linesWithWeights = poLines.map((line, idx) => {
+      const key = getWeightKey(group.vendor_id, idx);
+      const lbs = parseFloat(orderWeights[key] || '0');
+      const kg = Math.round((lbs / 2.20462) / 100) * 100;
+      return {
+        fish_name: line.fish_name,
+        cut_name: line.cut_name,
+        grade_name: line.grade_name,
+        fish_size: line.fish_size || null,
+        port_code: line.port_code,
+        destination_name: line.destination_name,
+        price_per_kg: line.price_per_kg,
+        airfreight_per_kg: line.airfreight_per_kg,
+        total_per_kg: line.price_per_kg + line.airfreight_per_kg,
+        order_weight_lbs: lbs,
+        order_weight_kg: kg,
+      };
+    }).filter((l) => l.order_weight_lbs > 0);
+
+    if (linesWithWeights.length === 0) {
+      alert('Please enter weight (lbs) for at least one line.');
+      return;
+    }
+
+    // estimate_id matches the suffix of estimate_number (EST-YYYY-MM-{id})
+    const poNumber = `PO-${group.quote_id}-${estimate.id}-${quote.vendor_code}`;
+    if (!confirm(`Send ${poNumber} to ${group.vendor_name} for ${linesWithWeights.length} line(s)?`)) return;
+
+    setSendingVendorId(group.vendor_id);
+    try {
+      const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quote_id: group.quote_id,
+          estimate_id: estimate.id,
+          vendor_id: group.vendor_id,
+          items: linesWithWeights,
+          delivery_date_from: deliveryDateFrom || null,
+          delivery_date_to: deliveryDateTo || null,
+        }),
+      });
+      const data = await resp.json();
+
+      if (data.success) {
+        // Track as sent
+        setSentPOs((prev) => ({
+          ...prev,
+          [group.vendor_id]: { po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
+        }));
+        alert(`✅ ${data.po_number} created successfully (${data.item_count} items)`);
+        onPOSent?.();
+      } else {
+        // Already exists or other issue
+        if (data.po_number) {
+          setSentPOs((prev) => ({
+            ...prev,
+            [group.vendor_id]: { po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
+          }));
+        }
+        alert(data.detail || 'Failed to create PO');
+      }
+    } catch (err) {
+      console.error('Error creating PO:', err);
+      alert('Failed to create PO. Please try again.');
+    } finally {
+      setSendingVendorId(null);
+    }
+  };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    return new Date(dateStr).toLocaleDateString();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-2xl w-[90vw] max-w-5xl max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">
+              Purchase Order — Estimate #{estimate.estimate_number}
+            </h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {formatDate(estimate.estimate_date)}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-2"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+          {loading && (
+            <div className="text-center text-gray-500 py-12">Loading vendor quotes…</div>
+          )}
+
+          {!loading && vendorGroups.length === 0 && (
+            <div className="text-center text-gray-500 py-12">No items found on this estimate.</div>
+          )}
+
+          {!loading &&
+            vendorGroups.map((group) => {
+              const isExpanded = expandedVendors.has(group.vendor_id);
+              const quote = group.vendorQuote;
+
+              return (
+                <div
+                  key={group.vendor_id}
+                  className="border border-gray-200 rounded-lg overflow-hidden"
+                >
+                  {/* Vendor header */}
+                  <div
+                    className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => toggleVendor(group.vendor_id)}
+                  >
+                    <div className="flex items-center space-x-4">
+                      <span className="font-semibold text-gray-800">{group.vendor_name}</span>
+                      {quote && (
+                        <>
+                          <span className="text-xs text-gray-500">
+                            Quote #{group.quote_id}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            Valid till {formatDate(quote.quote_valid_till)}
+                          </span>
+                          {quote.country_of_origin && (
+                            <span className="text-xs text-gray-400">{quote.country_of_origin}</span>
+                          )}
+                        </>
+                      )}
+                      {!quote && (
+                        <span className="text-xs text-amber-600">No linked quote</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center space-x-3">
+                      {sentPOs[group.vendor_id] ? (
+                        <span className="px-3 py-1 text-xs font-medium rounded bg-green-100 text-green-700 border border-green-300">
+                          ✓ {sentPOs[group.vendor_id].po_number}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSendPO(group);
+                          }}
+                          disabled={sendingVendorId === group.vendor_id || !quote}
+                          className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                            !quote
+                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              : sendingVendorId === group.vendor_id
+                              ? 'bg-emerald-400 text-white cursor-wait'
+                              : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          }`}
+                        >
+                          {sendingVendorId === group.vendor_id ? 'Sending…' : 'Send PO'}
+                        </button>
+                      )}
+                      <svg
+                        className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Expanded body */}
+                  {isExpanded && (
+                    <div className="p-4 space-y-4">
+                      {/* No linked quote message */}
+                      {!quote && (
+                        <div className="text-center text-amber-600 text-sm py-4">
+                          No original vendor quote linked to this estimate.
+                        </div>
+                      )}
+
+                      {/* PO lines: product × port with freight and editable weight */}
+                      {quote && (() => {
+                        const poLines = buildPOLines(group);
+                        if (poLines.length === 0) return (
+                          <div className="text-center text-gray-500 text-sm py-4">
+                            No matching products/destinations found.
+                          </div>
+                        );
+                        return (
+                          <div>
+                            <table className="min-w-full text-sm border border-gray-100">
+                              <thead className="bg-blue-50">
+                                <tr>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Fish</th>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Cut</th>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Grade</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Size (kg)</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Price/kg</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Freight/kg</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Total/kg</th>
+                                  <th className="px-3 py-2 text-center text-xs font-medium text-emerald-700 bg-emerald-50">
+                                    Order Wt (lbs)
+                                  </th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-emerald-700 bg-emerald-50">
+                                    Order Wt (kg)
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {poLines.map((line, idx) => {
+                                  const key = getWeightKey(group.vendor_id, idx);
+                                  const orderLbs = parseFloat(orderWeights[key] || '0') || 0;
+                                  const orderKg = orderLbs / 2.20462;
+                                  const totalPerKg = line.price_per_kg + line.airfreight_per_kg;
+                                  const prevPort = idx > 0 ? poLines[idx - 1].port_code : null;
+                                  const showPortHeader = line.port_code !== prevPort;
+                                  return (
+                                    <React.Fragment key={idx}>
+                                      {showPortHeader && (
+                                        <tr>
+                                          <td
+                                            colSpan={9}
+                                            className="px-3 py-2"
+                                            style={{ backgroundColor: '#0A3D5C' }}
+                                          >
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-xs font-bold tracking-wide text-white uppercase">
+                                                📍 {line.destination_name || line.port_code}
+                                                <span className="ml-2 font-normal opacity-80">({line.port_code})</span>
+                                              </span>
+                                              <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
+                                                <span className="text-xs text-white/70">Delivery</span>
+                                                <input
+                                                  type="date"
+                                                  value={deliveryDateFrom}
+                                                  onChange={(e) => setDeliveryDateFrom(e.target.value)}
+                                                  className="px-1.5 py-0.5 text-xs border border-white/30 rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark]"
+                                                />
+                                                <span className="text-xs text-white/50">–</span>
+                                                <input
+                                                  type="date"
+                                                  value={deliveryDateTo}
+                                                  onChange={(e) => setDeliveryDateTo(e.target.value)}
+                                                  className="px-1.5 py-0.5 text-xs border border-white/30 rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark]"
+                                                />
+                                              </div>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                      <tr className="hover:bg-gray-50 border-b border-gray-100">
+                                        <td className="px-3 py-2 text-gray-900">{line.fish_name}</td>
+                                        <td className="px-3 py-2 text-gray-700">{line.cut_name}</td>
+                                        <td className="px-3 py-2 text-gray-700">{line.grade_name}</td>
+                                        <td className="px-3 py-2 text-right text-gray-700">
+                                          {line.fish_size || '-'}
+                                        </td>
+                                        <td className="px-3 py-2 text-right text-gray-900 font-medium">
+                                          ${line.price_per_kg.toFixed(2)}
+                                        </td>
+                                        <td className="px-3 py-2 text-right text-gray-900">
+                                          ${line.airfreight_per_kg.toFixed(2)}
+                                        </td>
+                                        <td className="px-3 py-2 text-right text-gray-900 font-semibold">
+                                          ${totalPerKg.toFixed(2)}
+                                        </td>
+                                        <td className="px-2 py-1 bg-emerald-50">
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={orderWeights[key] || ''}
+                                            onChange={(e) => handleWeightChange(group.vendor_id, idx, e.target.value)}
+                                            placeholder="0"
+                                            className="w-24 px-2 py-1 text-right text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
+                                          />
+                                        </td>
+                                        <td className="px-3 py-2 text-right text-emerald-700 font-medium bg-emerald-50">
+                                          {orderLbs > 0 ? Math.round(orderKg / 100) * 100 : '-'}
+                                        </td>
+                                      </tr>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Vendor notes */}
+                      {quote && quote.notes && (
+                        <div className="text-sm text-gray-500 italic">
+                          <span className="font-medium text-gray-600">Vendor Notes:</span> {quote.notes}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-gray-200 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PODialog;
