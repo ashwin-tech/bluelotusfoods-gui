@@ -71,9 +71,34 @@ interface PODialogProps {
 }
 
 interface SentPO {
+  po_id: number;
   po_number: string;
   status: string;
   vendor_id: number;
+}
+
+const PO_STATUS_BADGE: Record<string, string> = {
+  sent:      'bg-blue-100 text-blue-700 border-blue-300',
+  accepted:  'bg-green-100 text-green-700 border-green-300',
+  rejected:  'bg-red-100 text-red-700 border-red-300',
+  cancelled: 'bg-gray-100 text-gray-500 border-gray-300',
+  fulfilled: 'bg-emerald-100 text-emerald-700 border-emerald-300',
+};
+
+const PO_STATUS_LABEL: Record<string, string> = {
+  sent:      'Received',
+  accepted:  'Accepted',
+  rejected:  'Rejected',
+  cancelled: 'Cancelled',
+  fulfilled: 'Fulfilled',
+};
+
+const PO_TOGGLE_CSS_ID = 'po-dialog-toggle-animations';
+if (typeof document !== 'undefined' && !document.getElementById(PO_TOGGLE_CSS_ID)) {
+  const s = document.createElement('style');
+  s.id = PO_TOGGLE_CSS_ID;
+  s.textContent = `.po-toggle-track { transition: background-color 0.2s; } .po-toggle-thumb { transition: transform 0.2s; }`;
+  document.head.appendChild(s);
 }
 
 interface VendorGroup {
@@ -188,8 +213,8 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       if (poData.success && poData.purchase_orders) {
         const existing: Record<number, SentPO> = {};
         for (const [vid, po] of Object.entries(poData.purchase_orders)) {
-          const poObj = po as { po_number: string; status: string; vendor_id: number };
-          existing[Number(vid)] = { po_number: poObj.po_number, status: poObj.status, vendor_id: poObj.vendor_id };
+          const poObj = po as { id: number; po_number: string; status: string; vendor_id: number };
+          existing[Number(vid)] = { po_id: poObj.id, po_number: poObj.po_number, status: poObj.status, vendor_id: poObj.vendor_id };
         }
         setSentPOs(existing);
       }
@@ -335,19 +360,17 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       const data = await resp.json();
 
       if (data.success) {
-        // Track as sent
         setSentPOs((prev) => ({
           ...prev,
-          [group.vendor_id]: { po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
+          [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
         }));
         alert(`✅ ${data.po_number} created successfully (${data.item_count} items)`);
         onPOSent?.();
       } else {
-        // Already exists or other issue
-        if (data.po_number) {
+        if (data.po_number && data.po_id) {
           setSentPOs((prev) => ({
             ...prev,
-            [group.vendor_id]: { po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
+            [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
           }));
         }
         alert(data.detail || 'Failed to create PO');
@@ -357,6 +380,36 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       alert('Failed to create PO. Please try again.');
     } finally {
       setSendingVendorId(null);
+    }
+  };
+
+  const handleCancelPO = async (sentPO: SentPO) => {
+    if (!confirm(`Cancel ${sentPO.po_number}? This cannot be undone.`)) return;
+    try {
+      const resp = await fetch(
+        `${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/${sentPO.po_id}/cancel`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actor_name: estimate.estimate_number,
+            actor_code: `estimate_${estimate.id}`,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        setSentPOs((prev) => ({
+          ...prev,
+          [sentPO.vendor_id]: { ...sentPO, status: 'cancelled' },
+        }));
+        onPOSent?.();
+      } else {
+        alert(data.detail || 'Failed to cancel PO');
+      }
+    } catch (err) {
+      console.error('Error cancelling PO:', err);
+      alert('Failed to cancel PO. Please try again.');
     }
   };
 
@@ -433,9 +486,56 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
 
                     <div className="flex items-center space-x-3">
                       {sentPOs[group.vendor_id] ? (
-                        <span className="px-3 py-1 text-xs font-medium rounded bg-green-100 text-green-700 border border-green-300">
-                          ✓ {sentPOs[group.vendor_id].po_number}
-                        </span>
+                        <>
+                          <span className={`px-3 py-1 text-xs font-medium rounded border ${PO_STATUS_BADGE[sentPOs[group.vendor_id].status] || 'bg-gray-100 text-gray-600 border-gray-300'}`}>
+                            {PO_STATUS_LABEL[sentPOs[group.vendor_id].status] || sentPOs[group.vendor_id].status} · {sentPOs[group.vendor_id].po_number}
+                          </span>
+                          {/* Cancel toggle — always visible when PO exists, locked once vendor accepts/rejects */}
+                          {(() => {
+                            const po = sentPOs[group.vendor_id];
+                            const isActive = ['sent', 'accepted', 'fulfilled'].includes(po.status);
+                            const canCancel = po.status === 'sent';
+                            const trackColor = po.status === 'fulfilled' ? '#059669'
+                              : po.status === 'accepted' ? '#16a34a'
+                              : po.status === 'sent'     ? '#16a34a'
+                              : po.status === 'rejected' ? '#ef4444'
+                              : '#9ca3af';
+                            const tooltipText = po.status === 'accepted'  ? 'Cannot cancel — vendor has accepted'
+                              : po.status === 'fulfilled' ? 'Cannot cancel — PO fulfilled'
+                              : po.status === 'rejected'  ? 'PO rejected by vendor'
+                              : po.status === 'sent'      ? 'Click to cancel this PO'
+                              : '';
+                            const label = po.status === 'sent' ? 'Active'
+                              : po.status === 'accepted'  ? 'Accepted'
+                              : po.status === 'fulfilled' ? 'Fulfilled'
+                              : po.status === 'rejected'  ? 'Rejected'
+                              : 'Cancelled';
+                            return (
+                              <div
+                                onClick={(e) => { e.stopPropagation(); if (canCancel) handleCancelPO(po); }}
+                                title={tooltipText}
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px',
+                                         cursor: canCancel ? 'pointer' : 'not-allowed', userSelect: 'none' }}
+                              >
+                                <div className="po-toggle-track" style={{
+                                  width: '40px', height: '22px', borderRadius: '11px',
+                                  position: 'relative', flexShrink: 0, backgroundColor: trackColor,
+                                }}>
+                                  <div className="po-toggle-thumb" style={{
+                                    position: 'absolute', top: '3px', width: '16px', height: '16px',
+                                    borderRadius: '50%', backgroundColor: '#fff',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                                    transform: isActive ? 'translateX(21px)' : 'translateX(3px)',
+                                  }} />
+                                </div>
+                                <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '56px',
+                                               color: isActive ? trackColor : '#9ca3af' }}>
+                                  {label}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </>
                       ) : (
                         <button
                           onClick={(e) => {
