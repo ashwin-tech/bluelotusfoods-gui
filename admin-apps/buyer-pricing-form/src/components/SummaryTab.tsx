@@ -41,6 +41,8 @@ interface EstimateItem {
   fish_size?: string;
 }
 
+interface POInfo { po_id: number; po_number: string; status: string; }
+
 interface SummaryTabProps {
   companies: Company[];
   apiBaseUrl: string;
@@ -52,9 +54,10 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   const [loading, setLoading] = useState(false);
   const [expandedEstimateIds, setExpandedEstimateIds] = useState<Set<number>>(new Set());
   const [sendingEstimateId, setSendingEstimateId] = useState<number | null>(null);
+  const [sendConfirm, setSendConfirm] = useState<{ id: number; number: string } | null>(null);
+  const [notifyBuyer, setNotifyBuyer] = useState(true);
   const [poEstimate, setPoEstimate] = useState<Estimate | null>(null);
-  // Track estimates that have at least one PO sent (set of estimate IDs)
-  const [poSentEstimateIds, setPoSentEstimateIds] = useState<Set<number>>(new Set());
+  const [poStatusByEstimate, setPoStatusByEstimate] = useState<Map<number, POInfo[]>>(new Map());
 
   // Collapsible sidebar
   const [companyPanelOpen, setCompanyPanelOpen] = useState(true);
@@ -63,12 +66,30 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
     try {
       const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/by-estimate/${estimateId}`);
       const data = await resp.json();
-      if (data.success && data.purchase_orders && Object.keys(data.purchase_orders).length > 0) {
-        setPoSentEstimateIds((prev) => new Set([...prev, estimateId]));
+      if (data.success && data.purchase_orders) {
+        const pos: POInfo[] = Object.values(data.purchase_orders).map((po: any) => ({
+          po_id: po.po_id,
+          po_number: po.po_number,
+          status: po.status,
+        }));
+        if (pos.length > 0) {
+          setPoStatusByEstimate(prev => new Map(prev).set(estimateId, pos));
+        }
       }
     } catch {
       // ignore
     }
+  };
+
+  const getEstimatePOAggregate = (estimateId: number): { label: string; className: string } | null => {
+    const pos = poStatusByEstimate.get(estimateId);
+    if (!pos || pos.length === 0) return null;
+    const statuses = pos.map(p => p.status);
+    if (statuses.every(s => s === 'fulfilled')) return { label: '✓ Fulfilled', className: 'bg-emerald-100 text-emerald-700 border border-emerald-300 hover:bg-emerald-200' };
+    if (statuses.every(s => s === 'accepted' || s === 'fulfilled')) return { label: '✓ Accepted', className: 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200' };
+    if (statuses.every(s => s === 'cancelled' || s === 'rejected')) return { label: 'PO Inactive', className: 'bg-gray-200 text-gray-500 border border-gray-300' };
+    if (statuses.some(s => s === 'accepted')) return { label: 'PO (partial)', className: 'bg-yellow-100 text-yellow-700 border border-yellow-300 hover:bg-yellow-200' };
+    return { label: '✓ PO Sent', className: 'bg-blue-100 text-blue-700 border border-blue-300 hover:bg-blue-200' };
   };
 
   const fetchCompanyEstimates = async (companyId: number) => {
@@ -94,28 +115,24 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
     }
   };
 
-  const handleSendEstimate = async (estimateId: number, estimateNumber: string) => {
-    if (!confirm(`Send estimate #${estimateNumber}? This will email the estimate PDF to the buyer(s).`)) {
-      return;
-    }
-
+  const handleSendEstimate = async () => {
+    if (!sendConfirm) return;
+    const { id: estimateId, number: estimateNumber } = sendConfirm;
+    setSendConfirm(null);
     setSendingEstimateId(estimateId);
     try {
       const response = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/${estimateId}/send`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notify_buyer: notifyBuyer }),
       });
-      
       const data = await response.json();
-      
       if (data.success) {
-        alert(`Estimate #${data.estimate_number} sent successfully to ${data.buyer_emails?.join(', ')}`);
-        // Refresh the estimates to show updated status
-        if (selectedCompanyId) {
-          fetchCompanyEstimates(selectedCompanyId);
-        }
+        const msg = notifyBuyer && data.buyer_emails?.length
+          ? `Estimate #${estimateNumber} sent. Buyer notified: ${data.buyer_emails.join(', ')}`
+          : `Estimate #${estimateNumber} sent. Owner notified only (buyer email skipped).`;
+        alert(msg);
+        if (selectedCompanyId) fetchCompanyEstimates(selectedCompanyId);
       } else {
         alert(`Failed to send estimate: ${data.detail || 'Unknown error'}`);
       }
@@ -124,6 +141,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
       alert('Failed to send estimate. Please try again.');
     } finally {
       setSendingEstimateId(null);
+      setNotifyBuyer(true); // reset for next use
     }
   };
 
@@ -298,7 +316,8 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleSendEstimate(estimate.id, estimate.estimate_number);
+                            setNotifyBuyer(true);
+                            setSendConfirm({ id: estimate.id, number: estimate.estimate_number });
                           }}
                           disabled={sendingEstimateId === estimate.id || estimate.status !== 'draft'}
                           className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
@@ -311,22 +330,24 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                         >
                           {sendingEstimateId === estimate.id ? 'Sending...' : 'Send'}
                         </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCreatePO(estimate);
-                          }}
-                          disabled={estimate.status !== 'sent'}
-                          className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                            estimate.status !== 'sent'
-                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                              : poSentEstimateIds.has(estimate.id)
-                              ? 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200'
-                              : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                          }`}
-                        >
-                          {poSentEstimateIds.has(estimate.id) ? '✓ PO Sent' : 'PO'}
-                        </button>
+                        {(() => {
+                          const agg = getEstimatePOAggregate(estimate.id);
+                          return (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleCreatePO(estimate); }}
+                              disabled={estimate.status !== 'sent'}
+                              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                estimate.status !== 'sent'
+                                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                  : agg
+                                  ? agg.className
+                                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              }`}
+                            >
+                              {agg ? agg.label : 'PO'}
+                            </button>
+                          );
+                        })()}
                         <svg 
                           className={`w-5 h-5 text-gray-400 transition-transform cursor-pointer ${isExpanded ? 'rotate-180' : ''}`}
                           fill="none" 
@@ -421,6 +442,39 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
         )}
       </div>
 
+      {/* Send confirm modal */}
+      {sendConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setSendConfirm(null)}>
+          <div className="bg-white rounded-lg shadow-xl p-6 w-80 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-800">Send Estimate #{sendConfirm.number}</h3>
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={notifyBuyer}
+                onChange={(e) => setNotifyBuyer(e.target.checked)}
+                className="w-4 h-4 accent-blue-600"
+              />
+              <span className="text-sm text-gray-700">Send email to buyer</span>
+            </label>
+            <p className="text-xs text-gray-400">Owner notification is always sent.</p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setSendConfirm(null)}
+                className="px-3 py-1.5 text-xs font-medium rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendEstimate}
+                className="px-3 py-1.5 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Confirm Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* PO Dialog */}
       {poEstimate && (
         <PODialog
@@ -428,8 +482,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
           apiBaseUrl={apiBaseUrl}
           onClose={() => setPoEstimate(null)}
           onPOSent={() => {
-            // Mark this estimate as having POs
-            setPoSentEstimateIds((prev) => new Set([...prev, poEstimate.id]));
+            checkEstimatePOStatus(poEstimate.id);
           }}
         />
       )}

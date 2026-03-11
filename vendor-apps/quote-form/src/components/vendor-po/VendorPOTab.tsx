@@ -64,6 +64,19 @@ interface ExistingBPL {
 interface VendorPOTabProps {
   vendorId: number;
   vendorName: string;
+  vendorCode: string;
+}
+
+interface AuditEntry {
+  id: number;
+  po_id: number;
+  from_status: string | null;
+  to_status: string;
+  actor_role: string;
+  actor_name: string | null;
+  actor_code: string | null;
+  notes: string | null;
+  created_at: string;
 }
 
 /* ─── Helpers ───────────────────────────────────── */
@@ -137,13 +150,13 @@ const S = {
   } as React.CSSProperties,
   statusDot: (status: string): React.CSSProperties => ({
     display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', marginRight: '6px',
-    backgroundColor: status === 'sent' ? '#2563eb' : status === 'completed' ? '#059669' : status === 'draft' ? '#f59e0b' : '#d1d5db',
+    backgroundColor: status === 'sent' ? '#059669' : status === 'completed' ? '#2563eb' : status === 'draft' ? '#f59e0b' : '#d1d5db',
   }),
   bplBadge: (status: string): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center',
     padding: '2px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 600, marginLeft: '8px',
-    backgroundColor: status === 'sent' ? '#dbeafe' : status === 'completed' ? '#d1fae5' : '#fef3c7',
-    color: status === 'sent' ? '#1e40af' : status === 'completed' ? '#065f46' : '#92400e',
+    backgroundColor: status === 'sent' ? '#d1fae5' : status === 'completed' ? '#dbeafe' : '#fef3c7',
+    color: status === 'sent' ? '#065f46' : status === 'completed' ? '#1e40af' : '#92400e',
   }),
 };
 
@@ -157,13 +170,15 @@ if (typeof document !== 'undefined' && !document.getElementById(PO_ANIM_ID)) {
     @keyframes poToastIn  { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes poToastOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-10px); } }
     @keyframes poSpin     { to { transform: rotate(360deg); } }
+    .port-toggle-track { transition: background-color 0.2s ease; }
+    .port-toggle-thumb { transition: transform 0.2s ease; }
   `;
   document.head.appendChild(style);
 }
 
 /* ─── Component ─────────────────────────────────── */
 
-const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
+const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorCode }) => {
   const [weekStart, setWeekStart] = useState<Date>(getMonday(new Date()));
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [selectedPO, setSelectedPO] = useState<PODetail | null>(null);
@@ -176,6 +191,19 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
   const [bplsByPort, setBplsByPort] = useState<Map<string, ExistingBPL>>(new Map());
   const [bplFormOpen, setBplFormOpen] = useState<{ portCode: string; items: POItem[]; existing: ExistingBPL | null } | null>(null);
   const [sendingBPL, setSendingBPL] = useState<string | null>(null);
+
+  // Port-level acceptance
+  const [acceptedPorts, setAcceptedPorts] = useState<string[]>([]);
+  const [rejectedPorts, setRejectedPorts] = useState<string[]>([]);
+  const [togglingPort, setTogglingPort] = useState<string | null>(null);
+
+  // PO action state (reject only — accept is now per-port)
+  const [confirmAction, setConfirmAction] = useState<'reject' | null>(null);
+  const [actionNote, setActionNote] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Audit log state
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
 
   // Toast + confirmation state
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -213,20 +241,25 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
 
   useEffect(() => { fetchPOs(); }, [fetchPOs]);
 
-  /* ── Fetch PO detail + BPL status ── */
+  /* ── Fetch PO detail + BPL status + audit log ── */
   const fetchPODetail = async (poId: number) => {
     setLoadingDetail(true);
     setCheckedItems(new Set());
+    setAuditLog([]);
     try {
-      const [poResp, bplResp] = await Promise.all([
+      const [poResp, bplResp, auditResp] = await Promise.all([
         fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/items`),
         fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/bpl`),
+        fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/audit`),
       ]);
       const poData = await poResp.json();
       const bplData = await bplResp.json();
+      const auditData = await auditResp.json();
 
       if (poData.success) {
         setSelectedPO(poData.purchase_order);
+        setAcceptedPorts(poData.purchase_order.accepted_ports || []);
+        setRejectedPorts(poData.purchase_order.rejected_ports || []);
       }
       if (bplData.success) {
         setCoveredItemIds(new Set(bplData.covered_po_item_ids || []));
@@ -235,16 +268,93 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
           map.set(bpl.port_code, bpl);
         }
         setBplsByPort(map);
-        // Pre-check items that already have BPL entries
         const preChecked = new Set<number>(bplData.covered_po_item_ids || []);
         setCheckedItems(preChecked);
+      }
+      if (auditData.success) {
+        setAuditLog(auditData.audit || []);
       }
     } catch (err) {
       console.error('Error fetching PO details:', err);
     } finally {
       setLoadingDetail(false);
-      // Auto-collapse panel on small screens after selecting a PO
       if (window.innerWidth < 768) setPanelOpen(false);
+    }
+  };
+
+  /* ── Toggle port accept/reject ── */
+  const handleTogglePort = async (portCode: string, action: 'accept' | 'reject') => {
+    if (!selectedPO) return;
+    setTogglingPort(portCode);
+    try {
+      const resp = await fetch(
+        `${API_BASE_URL}/vendors/purchase-orders/${selectedPO.id}/ports/${encodeURIComponent(portCode)}/${action}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actor_name: vendorName, actor_code: vendorCode }),
+        }
+      );
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        setAcceptedPorts(data.accepted_ports || []);
+        setRejectedPorts(data.rejected_ports || []);
+        // On reject: clear checkboxes for this port's items
+        if (action === 'reject') {
+          const portItemIds = selectedPO.items.filter(i => i.port_code === portCode).map(i => i.id);
+          setCheckedItems(prev => {
+            const next = new Set(prev);
+            portItemIds.forEach(id => next.delete(id));
+            return next;
+          });
+        }
+        showToast('success', action === 'accept' ? `Port ${portCode} accepted.` : `Port ${portCode} rejected.`);
+        await fetchPOs();
+        await fetchPODetail(selectedPO.id);
+      } else {
+        showToast('error', data.detail || `Failed to ${action} port ${portCode}.`);
+      }
+    } catch (err) {
+      console.error(`Error ${action}ing port:`, err);
+      showToast('error', 'Network error — could not reach the server.');
+    } finally {
+      setTogglingPort(null);
+    }
+  };
+
+  /* ── Reject PO ── */
+  const handlePOAction = async (action: 'reject') => {
+    if (!selectedPO) return;
+    setActionLoading(true);
+    try {
+      const resp = await fetch(
+        `${API_BASE_URL}/vendors/purchase-orders/${selectedPO.id}/${action}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actor_role: 'vendor',
+            actor_name: vendorName,
+            actor_code: vendorCode,
+            notes: actionNote || null,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        showToast('success', 'PO rejected.');
+        setConfirmAction(null);
+        setActionNote('');
+        await fetchPOs();
+        await fetchPODetail(selectedPO.id);
+      } else {
+        showToast('error', data.detail || 'Failed to reject PO.');
+      }
+    } catch (err) {
+      console.error('Error rejecting PO:', err);
+      showToast('error', 'Network error — could not reach the server.');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -281,6 +391,9 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
       if (resp.ok && data.success) {
         showToast('success', `BPL emails sent for port ${portCode}!`);
         await refreshBPL();
+        // Re-fetch PO detail to pick up any auto-fulfilled status change
+        await fetchPODetail(selectedPO.id);
+        await fetchPOs();
       } else {
         showToast('error', `Failed to send: ${data.detail || data.message || 'Unknown error'}`);
       }
@@ -323,15 +436,23 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
   /* ── Status helpers ── */
   const statusBadge = (status: string) => {
     const styles: Record<string, string> = {
-      sent: 'bg-blue-100 text-blue-700',
-      acknowledged: 'bg-green-100 text-green-700',
+      sent:      'bg-blue-100 text-blue-700',
+      accepted:  'bg-green-100 text-green-700',
+      rejected:  'bg-red-100 text-red-700',
+      cancelled: 'bg-gray-100 text-gray-500',
       fulfilled: 'bg-emerald-100 text-emerald-700',
     };
     return styles[status] || 'bg-gray-100 text-gray-700';
   };
 
   const statusLabel = (status: string) => {
-    const labels: Record<string, string> = { sent: 'Received', acknowledged: 'Acknowledged', fulfilled: 'Fulfilled' };
+    const labels: Record<string, string> = {
+      sent:      'Received',
+      accepted:  'Accepted',
+      rejected:  'Rejected',
+      cancelled: 'Cancelled',
+      fulfilled: 'Fulfilled',
+    };
     return labels[status] || status;
   };
 
@@ -437,22 +558,49 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
           {selectedPO && !loadingDetail && (
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               {/* PO Header */}
-              <div style={{ padding: '12px 20px', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ padding: '12px 20px', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
                 <div>
                   <h3 style={{ color: '#1f2937', fontSize: '17px', fontWeight: 700, margin: 0 }}>{selectedPO.po_number}</h3>
                   <p style={{ color: '#6b7280', fontSize: '12px', marginTop: '2px' }}>
                     Estimate #{selectedPO.estimate_number} · Created {new Date(selectedPO.created_at).toLocaleDateString()}
                   </p>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusBadge(selectedPO.status)}`}>
-                  {statusLabel(selectedPO.status)}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  {selectedPO.status === 'sent' && (
+                    <button
+                      onClick={() => { setActionNote(''); setConfirmAction('reject'); }}
+                      style={{ padding: '7px 18px', backgroundColor: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      ✕ Reject PO
+                    </button>
+                  )}
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusBadge(selectedPO.status)}`}>
+                    {statusLabel(selectedPO.status)}
+                  </span>
+                </div>
               </div>
 
-              {/* Instruction bar */}
-              <div style={{ padding: '10px 20px', backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a', fontSize: '12px', color: '#92400e' }}>
-                💡 Select items you can fulfill, then click <strong>Create BPL</strong> per port to fill the box packaging list.
-              </div>
+              {/* Instruction bar — context-sensitive */}
+              {selectedPO.status === 'sent' && (
+                <div style={{ padding: '10px 20px', backgroundColor: '#eff6ff', borderBottom: '1px solid #bfdbfe', fontSize: '12px', color: '#1d4ed8' }}>
+                  📋 Review each port below. Click <strong>Accept Port</strong> for ports you can fulfill, or <strong>Reject PO</strong> to decline entirely.
+                </div>
+              )}
+              {selectedPO.status === 'accepted' && (
+                <div style={{ padding: '10px 20px', backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a', fontSize: '12px', color: '#92400e' }}>
+                  💡 Select items you can fulfill, then click <strong>Create BPL</strong> per port to fill the box packaging list.
+                </div>
+              )}
+              {(selectedPO.status === 'rejected' || selectedPO.status === 'cancelled') && (
+                <div style={{ padding: '10px 20px', backgroundColor: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: '12px', color: '#dc2626' }}>
+                  ⚠️ This purchase order is <strong>{statusLabel(selectedPO.status)}</strong>. No further actions are available.
+                </div>
+              )}
+              {selectedPO.status === 'fulfilled' && (
+                <div style={{ padding: '10px 20px', backgroundColor: '#ecfdf5', borderBottom: '1px solid #a7f3d0', fontSize: '12px', color: '#065f46' }}>
+                  ✅ This purchase order has been <strong>Fulfilled</strong>. All shipments have been sent.
+                </div>
+              )}
 
               {/* PO Items — grouped by port */}
               <div style={{ padding: '16px' }}>
@@ -463,6 +611,13 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
                   const someChecked = allPortIds.some(id => checkedItems.has(id));
                   const checkedPortItems = items.filter(i => checkedItems.has(i.id));
                   const hasCheckedItems = checkedPortItems.length > 0;
+                  const isPortAccepted = acceptedPorts.includes(port);
+                  const isPortRejected = rejectedPorts.includes(port);
+                  const canCreateBPL = isPortAccepted;
+                  const poTerminated = ['rejected', 'cancelled'].includes(selectedPO.status);
+                  const isToggling = togglingPort === port;
+                  const bplSent = portBPL?.status === 'sent';
+                  const toggleLocked = bplSent; // cannot change after BPL is sent
 
                   return (
                     <div key={port} style={{ marginBottom: '20px', border: '1px solid #d1d5db', borderRadius: '8px', overflow: 'hidden' }}>
@@ -489,49 +644,80 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
                             </span>
                           )}
                         </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          {portBPL ? (
-                            portBPL.status === 'sent' ? (
-                              /* Sent — read-only, no edit, no send */
-                              <span style={{ fontSize: '12px', color: '#1e40af', fontWeight: 500 }}>✅ Sent</span>
-                            ) : (
-                              <>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          {/* Port accept/reject toggle slider — hidden after BPL sent, locked only when BPL sent */}
+                          {!bplSent && <div
+                            onClick={() => !isToggling && !toggleLocked && handleTogglePort(port, isPortAccepted ? 'reject' : 'accept')}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: toggleLocked ? 'not-allowed' : isToggling ? 'wait' : 'pointer', opacity: isToggling ? 0.6 : 1, userSelect: 'none' }}
+                            title={toggleLocked ? 'Cannot change — BPL already sent' : isPortAccepted ? 'Click to reject this port' : 'Click to accept this port'}
+                          >
+                            {/* Track */}
+                            <div
+                              className="port-toggle-track"
+                              style={{
+                                width: '40px', height: '22px', borderRadius: '11px', position: 'relative', flexShrink: 0,
+                                backgroundColor: isPortAccepted ? '#059669' : isPortRejected ? '#ef4444' : '#d1d5db',
+                              }}
+                            >
+                              {/* Thumb */}
+                              <div
+                                className="port-toggle-thumb"
+                                style={{
+                                  position: 'absolute', top: '3px', width: '16px', height: '16px',
+                                  borderRadius: '50%', backgroundColor: '#fff',
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                                  transform: isPortAccepted ? 'translateX(21px)' : 'translateX(3px)',
+                                }}
+                              />
+                            </div>
+                            {/* Label */}
+                            <span style={{
+                              fontSize: '11px', fontWeight: 600, minWidth: '52px',
+                              color: isPortAccepted ? '#059669' : isPortRejected ? '#ef4444' : '#9ca3af',
+                            }}>
+                              {isPortAccepted ? 'Accepted' : isPortRejected ? 'Rejected' : 'Pending'}
+                            </span>
+                          </div>}
+                          {(selectedPO.status === 'rejected' || selectedPO.status === 'cancelled') && (
+                            <span style={{ fontSize: '12px', color: '#9ca3af', fontStyle: 'italic' }}>PO not active</span>
+                          )}
+                          {!bplSent && (canCreateBPL && portBPL ? (
+                            <>
+                              <button
+                                style={S.bplBtnEdit}
+                                onClick={() => {
+                                  const existingPoItemIds = new Set(portBPL.boxes.map(b => b.po_item_id));
+                                  const editItems = items.filter(i => existingPoItemIds.has(i.id) || checkedItems.has(i.id));
+                                  setBplFormOpen({ portCode: port, items: editItems, existing: portBPL });
+                                }}
+                              >
+                                ✏️ Edit BPL
+                              </button>
+                              {portBPL.status === 'completed' && (
                                 <button
-                                  style={S.bplBtnEdit}
-                                  onClick={() => {
-                                    const existingPoItemIds = new Set(portBPL.boxes.map(b => b.po_item_id));
-                                    const editItems = items.filter(i => existingPoItemIds.has(i.id) || checkedItems.has(i.id));
-                                    setBplFormOpen({ portCode: port, items: editItems, existing: portBPL });
-                                  }}
+                                  style={sendingBPL === port ? S.bplBtnSending : S.bplBtnSend}
+                                  disabled={sendingBPL === port}
+                                  onClick={() => setConfirmSend(port)}
                                 >
-                                  ✏️ Edit BPL
+                                  {sendingBPL === port ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid #d1d5db', borderTopColor: '#059669', borderRadius: '50%', animation: 'poSpin 0.6s linear infinite' }} />
+                                      Sending…
+                                    </span>
+                                  ) : '📧 Send BPL'}
                                 </button>
-                                {portBPL.status === 'completed' && (
-                                  <button
-                                    style={sendingBPL === port ? S.bplBtnSending : S.bplBtnSend}
-                                    disabled={sendingBPL === port}
-                                    onClick={() => setConfirmSend(port)}
-                                  >
-                                    {sendingBPL === port ? (
-                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid #d1d5db', borderTopColor: '#059669', borderRadius: '50%', animation: 'poSpin 0.6s linear infinite' }} />
-                                        Sending…
-                                      </span>
-                                    ) : '📧 Send BPL'}
-                                  </button>
-                                )}
-                              </>
-                            )
+                              )}
+                            </>
                           ) : (
                             <button
-                              style={hasCheckedItems ? S.bplBtnActive : S.bplBtnDisabled}
-                              disabled={!hasCheckedItems}
-                              onClick={() => setBplFormOpen({ portCode: port, items: checkedPortItems, existing: null })}
-                              title={hasCheckedItems ? `Create BPL for ${checkedPortItems.length} selected items` : 'Select items first'}
+                              style={canCreateBPL && hasCheckedItems ? S.bplBtnActive : S.bplBtnDisabled}
+                              disabled={!canCreateBPL || !hasCheckedItems}
+                              onClick={() => canCreateBPL && setBplFormOpen({ portCode: port, items: checkedPortItems, existing: null })}
+                              title={!canCreateBPL ? 'Accept this port to create a BPL' : hasCheckedItems ? `Create BPL for ${checkedPortItems.length} selected items` : 'Select items first'}
                             >
                               📦 Create BPL
                             </button>
-                          )}
+                          ))}
                         </div>
                       </div>
 
@@ -605,6 +791,35 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
                     </span>
                   </div>
                 )}
+
+                {/* Audit Log */}
+                {auditLog.length > 0 && (
+                  <div style={{ marginTop: '24px', borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#374151', marginBottom: '10px' }}>Activity</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {auditLog.map(entry => (
+                        <div key={entry.id} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', fontSize: '12px' }}>
+                          <div style={{ width: '130px', flexShrink: 0, color: '#9ca3af' }}>
+                            {new Date(entry.created_at).toLocaleString()}
+                          </div>
+                          <div style={{ color: '#6b7280', width: '60px', flexShrink: 0, textTransform: 'capitalize' }}>
+                            {entry.actor_role}
+                          </div>
+                          <div style={{ flex: 1, color: '#1f2937' }}>
+                            <span style={{ fontWeight: 600 }}>{entry.actor_name || entry.actor_code}</span>
+                            {' — '}
+                            <span style={{ color: '#6b7280' }}>
+                              {entry.from_status ? `${statusLabel(entry.from_status)} → ` : ''}{statusLabel(entry.to_status)}
+                            </span>
+                            {entry.notes && (
+                              <span style={{ color: '#92400e', marginLeft: '8px', fontStyle: 'italic' }}>"{entry.notes}"</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -641,6 +856,56 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName }) => {
             onClick={() => setToast(null)}
             style={{ marginLeft: '8px', background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: 'inherit', lineHeight: 1 }}
           >×</button>
+        </div>
+      )}
+
+      {/* ── Reject Confirmation Dialog ── */}
+      {confirmAction && selectedPO && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60,
+        }} onClick={() => setConfirmAction(null)}>
+          <div style={{
+            backgroundColor: '#fff', borderRadius: '12px', padding: '28px 32px',
+            maxWidth: '420px', width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            animation: 'poToastIn 0.2s ease-out',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+              ✕ Reject Purchase Order?
+            </div>
+            <p style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.5, margin: '0 0 16px' }}>
+              You are rejecting {selectedPO.po_number}. Please provide a reason (optional).
+            </p>
+            <textarea
+              value={actionNote}
+              onChange={e => setActionNote(e.target.value)}
+              placeholder="Reason for rejection (optional)…"
+              rows={3}
+              style={{
+                width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '6px',
+                fontSize: '13px', resize: 'vertical', outline: 'none', marginBottom: '16px',
+                boxSizing: 'border-box',
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setConfirmAction(null)}
+                disabled={actionLoading}
+                style={{ padding: '8px 20px', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                onClick={() => handlePOAction('reject')}
+                disabled={actionLoading}
+                style={{
+                  padding: '8px 20px', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
+                  cursor: actionLoading ? 'wait' : 'pointer', backgroundColor: '#dc2626',
+                  color: '#fff', opacity: actionLoading ? 0.7 : 1,
+                }}
+              >
+                {actionLoading ? 'Processing…' : 'Reject'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

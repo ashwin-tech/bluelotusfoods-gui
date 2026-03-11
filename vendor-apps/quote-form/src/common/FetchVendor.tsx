@@ -147,6 +147,7 @@ export default function FetchVendor() {
             <VendorPOTab
               vendorId={vendorId}
               vendorName={formData.vendorName}
+              vendorCode={vendorCode ?? ''}
             />
           )}
         </div>
