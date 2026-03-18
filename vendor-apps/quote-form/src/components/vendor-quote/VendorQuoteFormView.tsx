@@ -68,12 +68,13 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
       
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Vendor Info */}
-        <div className="grid grid-cols-2 gap-4">
-          {/* Left column - Company and Country */}
-          <div className="space-y-4">
-            <label htmlFor="quoteId">Vendor Name</label>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          {/* Row 1 left — Vendor Name */}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="vendorName">Vendor Name</label>
             <input
               type="text"
+              id="vendorName"
               name="vendorName"
               placeholder="Vendor Name"
               value={formData.vendorName}
@@ -84,9 +85,28 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                 vendorNameReadOnly ? "bg-gray-100 cursor-not-allowed" : ""
               }`}
             />
-            <label htmlFor="quoteId">Country Of Origin</label>
+          </div>
+
+          {/* Row 1 right — Quote Valid Till */}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="quoteValidTill">Quote Valid Till</label>
+            <input
+              type="date"
+              id="quoteValidTill"
+              name="quoteValidTill"
+              placeholder="Select Date"
+              value={formData.quoteValidTill || ""}
+              onChange={handleChange}
+              className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 w-full"
+            />
+          </div>
+
+          {/* Row 2 left — Country Of Origin */}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="countryOfOrigin">Country Of Origin</label>
             <input
               type="text"
+              id="countryOfOrigin"
               name="countryOfOrigin"
               placeholder="Country of Origin"
               value={formData.countryOfOrigin}
@@ -98,27 +118,18 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
               }`}
             />
           </div>
-          
-          {/* Right column - Quote valid until */}
-          <div className="space-y-4">
-            <label htmlFor="quoteValidTill">Quote Valid Till </label>
+
+          {/* Row 2 right — Quote ID */}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="quoteId">Quote ID</label>
             <input
-              type="date"
-              name="quoteValidTill"
-              placeholder="Select Date" // Placeholder for Chrome
-              value={formData.quoteValidTill || ""} // Explicitly set empty string for Safari
-              onChange={handleChange}
-              className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 w-full"
+              type="text"
+              id="quoteId"
+              name="quoteId"
+              value={nextQuoteId ?? ""}
+              readOnly
+              className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 w-full bg-gray-100 cursor-not-allowed"
             />
-            <label htmlFor="quoteValidTill">Quote ID</label>
-            <input
-            type="text"
-            id="quoteId"
-            name="quoteId"
-            value={nextQuoteId ?? ""}
-            readOnly
-            className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 w-full bg-gray-100 cursor-not-allowed"
-          />
           </div>
         </div>
 

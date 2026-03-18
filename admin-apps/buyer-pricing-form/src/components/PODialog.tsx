@@ -70,11 +70,21 @@ interface PODialogProps {
   onPOSent?: () => void;
 }
 
+interface SentPOItem {
+  fish_name: string;
+  cut_name: string;
+  grade_name: string;
+  fish_size: string | null;
+  port_code: string;
+  order_weight_lbs: number;
+}
+
 interface SentPO {
   po_id: number;
   po_number: string;
   status: string;
   vendor_id: number;
+  items: SentPOItem[];
 }
 
 const PO_STATUS_BADGE: Record<string, string> = {
@@ -133,17 +143,54 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   const [orderWeights, setOrderWeights] = useState<OrderWeights>({});
   // Track which vendors already have POs (keyed by vendor_id)
   const [sentPOs, setSentPOs] = useState<Record<number, SentPO>>({});
-  // Editable delivery date range — defaults from estimate
-  const [deliveryDateFrom, setDeliveryDateFrom] = useState<string>(
-    estimate.delivery_date_from || ''
-  );
-  const [deliveryDateTo, setDeliveryDateTo] = useState<string>(
-    estimate.delivery_date_to || ''
-  );
+  // Timeline data per po_id
+  const [poTimelines, setPoTimelines] = useState<Record<number, { created_at: string; accepted_at: string | null; fulfilled_at: string | null }>>({});
+  // Editable delivery date range — defaults from estimate, or today+3 / today+5
+  const defaultFrom = (() => {
+    if (estimate.delivery_date_from) return estimate.delivery_date_from;
+    const d = new Date();
+    d.setDate(d.getDate() + 3);
+    return d.toISOString().split('T')[0];
+  })();
+  const defaultTo = (() => {
+    if (estimate.delivery_date_to) return estimate.delivery_date_to;
+    const d = new Date();
+    d.setDate(d.getDate() + 5);
+    return d.toISOString().split('T')[0];
+  })();
+  const [deliveryDateFrom, setDeliveryDateFrom] = useState<string>(defaultFrom);
+  const [deliveryDateTo, setDeliveryDateTo] = useState<string>(defaultTo);
 
   useEffect(() => {
     fetchVendorQuotes();
   }, []);
+
+  // Pre-populate order weights from existing PO items when dialog reopens for a sent PO
+  useEffect(() => {
+    if (vendorGroups.length === 0) return;
+    const initialWeights: OrderWeights = {};
+    vendorGroups.forEach(group => {
+      const po = sentPOs[group.vendor_id];
+      if (!po?.items?.length) return;
+      const poLines = buildPOLines(group);
+      poLines.forEach((line, idx) => {
+        const match = po.items.find(
+          item =>
+            item.fish_name === line.fish_name &&
+            item.cut_name === line.cut_name &&
+            item.grade_name === line.grade_name &&
+            (item.fish_size || null) === (line.fish_size || null) &&
+            item.port_code === line.port_code
+        );
+        if (match) {
+          initialWeights[`${group.vendor_id}-${idx}`] = String(match.order_weight_lbs);
+        }
+      });
+    });
+    if (Object.keys(initialWeights).length > 0) {
+      setOrderWeights(prev => ({ ...prev, ...initialWeights }));
+    }
+  }, [vendorGroups, sentPOs]);
 
   const fetchVendorQuotes = async () => {
     setLoading(true);
@@ -213,10 +260,36 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       if (poData.success && poData.purchase_orders) {
         const existing: Record<number, SentPO> = {};
         for (const [vid, po] of Object.entries(poData.purchase_orders)) {
-          const poObj = po as { id: number; po_number: string; status: string; vendor_id: number };
-          existing[Number(vid)] = { po_id: poObj.id, po_number: poObj.po_number, status: poObj.status, vendor_id: poObj.vendor_id };
+          const poObj = po as { id: number; po_number: string; status: string; vendor_id: number; items?: SentPOItem[] };
+          existing[Number(vid)] = {
+            po_id: poObj.id,
+            po_number: poObj.po_number,
+            status: poObj.status,
+            vendor_id: poObj.vendor_id,
+            items: (poObj as any).items || [],
+          };
         }
         setSentPOs(existing);
+
+        // Fetch timelines for all found POs in parallel
+        const poList = Object.values(existing);
+        if (poList.length > 0) {
+          const timelineResults = await Promise.all(
+            poList.map(po =>
+              fetch(`${apiBaseUrl}/vendors/purchase-orders/${po.po_id}/timeline`)
+                .then(r => r.json())
+                .then(d => ({ po_id: po.po_id, data: d }))
+                .catch(() => ({ po_id: po.po_id, data: null }))
+            )
+          );
+          const timelines: Record<number, { created_at: string; accepted_at: string | null; fulfilled_at: string | null }> = {};
+          for (const { po_id, data } of timelineResults) {
+            if (data?.success) {
+              timelines[po_id] = { created_at: data.created_at, accepted_at: data.accepted_at, fulfilled_at: data.fulfilled_at };
+            }
+          }
+          setPoTimelines(timelines);
+        }
       }
     } catch (err) {
       console.error('Error fetching existing POs:', err);
@@ -336,6 +409,11 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
 
     if (linesWithWeights.length === 0) {
       alert('Please enter weight (lbs) for at least one line.');
+      return;
+    }
+
+    if (!deliveryDateFrom || !deliveryDateTo) {
+      alert('Please set both delivery From and To dates before sending the PO.');
       return;
     }
 
@@ -568,6 +646,51 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                   {/* Expanded body */}
                   {isExpanded && (
                     <div className="p-4 space-y-4">
+                      {/* PO Timeline */}
+                      {(() => {
+                        const po = sentPOs[group.vendor_id];
+                        if (!po) return null;
+                        const tl = poTimelines[po.po_id];
+                        if (!tl) return null;
+                        const milestones = [
+                          { label: 'Created', date: tl.created_at },
+                          { label: 'Accepted', date: tl.accepted_at },
+                          { label: 'Fulfilled', date: tl.fulfilled_at },
+                        ];
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0 4px', gap: 0 }}>
+                            {milestones.map((m, i) => {
+                              const done = !!m.date;
+                              const dotColor = done ? '#059669' : '#d1d5db';
+                              const labelColor = done ? '#065f46' : '#9ca3af';
+                              return (
+                                <React.Fragment key={m.label}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '80px' }}>
+                                    <div style={{
+                                      width: '14px', height: '14px', borderRadius: '50%',
+                                      backgroundColor: dotColor, border: `2px solid ${done ? '#059669' : '#d1d5db'}`,
+                                      flexShrink: 0,
+                                    }} />
+                                    <span style={{ fontSize: '11px', fontWeight: 600, color: labelColor, marginTop: '4px', textAlign: 'center' }}>
+                                      {m.label}
+                                    </span>
+                                    <span style={{ fontSize: '10px', color: '#9ca3af', textAlign: 'center' }}>
+                                      {m.date ? new Date(m.date).toLocaleDateString() : '—'}
+                                    </span>
+                                  </div>
+                                  {i < milestones.length - 1 && (
+                                    <div style={{
+                                      flex: 1, height: '2px', backgroundColor: milestones[i + 1].date ? '#059669' : '#e5e7eb',
+                                      alignSelf: 'flex-start', marginTop: '6px',
+                                    }} />
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+
                       {/* No linked quote message */}
                       {!quote && (
                         <div className="text-center text-amber-600 text-sm py-4">
@@ -596,7 +719,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                   <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Freight/kg</th>
                                   <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Total/kg</th>
                                   <th className="px-3 py-2 text-center text-xs font-medium text-emerald-700 bg-emerald-50">
-                                    Order Wt (lbs)
+                                    Order Wt (lbs) <span className="text-red-500">*</span>
                                   </th>
                                   <th className="px-3 py-2 text-right text-xs font-medium text-emerald-700 bg-emerald-50">
                                     Order Wt (kg)
@@ -626,19 +749,30 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                                 <span className="ml-2 font-normal opacity-80">({line.port_code})</span>
                                               </span>
                                               <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
-                                                <span className="text-xs text-white/70">Delivery</span>
+                                                <span className="text-xs text-white/70">Delivery <span className="text-red-400">*</span></span>
                                                 <input
                                                   type="date"
                                                   value={deliveryDateFrom}
-                                                  onChange={(e) => setDeliveryDateFrom(e.target.value)}
-                                                  className="px-1.5 py-0.5 text-xs border border-white/30 rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark]"
+                                                  onChange={(e) => {
+                                                    setDeliveryDateFrom(e.target.value);
+                                                    // Auto-advance To date to From + 2 if To is unset or behind From
+                                                    if (e.target.value) {
+                                                      const to = new Date(e.target.value);
+                                                      to.setDate(to.getDate() + 2);
+                                                      const toStr = to.toISOString().split('T')[0];
+                                                      if (!deliveryDateTo || deliveryDateTo < e.target.value) {
+                                                        setDeliveryDateTo(toStr);
+                                                      }
+                                                    }
+                                                  }}
+                                                  className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!deliveryDateFrom ? 'border-yellow-400' : 'border-white/30'}`}
                                                 />
                                                 <span className="text-xs text-white/50">–</span>
                                                 <input
                                                   type="date"
                                                   value={deliveryDateTo}
                                                   onChange={(e) => setDeliveryDateTo(e.target.value)}
-                                                  className="px-1.5 py-0.5 text-xs border border-white/30 rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark]"
+                                                  className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!deliveryDateTo ? 'border-yellow-400' : 'border-white/30'}`}
                                                 />
                                               </div>
                                             </div>
@@ -662,14 +796,24 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                           ${totalPerKg.toFixed(2)}
                                         </td>
                                         <td className="px-2 py-1 bg-emerald-50">
-                                          <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            value={orderWeights[key] || ''}
-                                            onChange={(e) => handleWeightChange(group.vendor_id, idx, e.target.value)}
-                                            placeholder="0"
-                                            className="w-24 px-2 py-1 text-right text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
-                                          />
+                                          {(() => {
+                                            const isSent = !!sentPOs[group.vendor_id];
+                                            return (
+                                              <input
+                                                type="text"
+                                                inputMode="decimal"
+                                                value={orderWeights[key] || ''}
+                                                onChange={(e) => handleWeightChange(group.vendor_id, idx, e.target.value)}
+                                                placeholder="0"
+                                                disabled={isSent}
+                                                className={`w-24 px-2 py-1 text-right text-sm border rounded focus:outline-none ${
+                                                  isSent
+                                                    ? 'bg-gray-100 text-gray-500 border-gray-300 cursor-not-allowed'
+                                                    : 'border-emerald-300 focus:ring-1 focus:ring-emerald-500 bg-white'
+                                                }`}
+                                              />
+                                            );
+                                          })()}
                                         </td>
                                         <td className="px-3 py-2 text-right text-emerald-700 font-medium bg-emerald-50">
                                           {orderLbs > 0 ? Math.round(orderKg / 100) * 100 : '-'}

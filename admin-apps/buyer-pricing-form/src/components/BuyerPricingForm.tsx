@@ -67,6 +67,17 @@ interface Props {
   apiBaseUrl: string;
 }
 
+const defaultDeliveryDates = () => {
+  const from = new Date();
+  from.setDate(from.getDate() + 3);
+  const to = new Date();
+  to.setDate(to.getDate() + 5);
+  return {
+    deliveryDateFrom: from.toISOString().split('T')[0],
+    deliveryDateTo: to.toISOString().split('T')[0],
+  };
+};
+
 interface CompanyFormState {
   selectedVendors: number[];
   selectedPorts: string[];
@@ -175,8 +186,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
         selectedVendors: [],
         selectedPorts: [],
         dateRange: 'This Week',
-        deliveryDateFrom: '',
-        deliveryDateTo: '',
+        ...defaultDeliveryDates(),
         buyerEmails: [],
         selectedBuyerEmails: new Set(),
         estimates: []
@@ -186,8 +196,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       selectedVendors: [],
       selectedPorts: [],
       dateRange: 'This Week',
-      deliveryDateFrom: '',
-      deliveryDateTo: '',
+      ...defaultDeliveryDates(),
       buyerEmails: [],
       selectedBuyerEmails: new Set(),
       estimates: []
@@ -382,8 +391,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
           selectedVendors: [],
           selectedPorts: [],
           dateRange: 'This Week',
-          deliveryDateFrom: '',
-          deliveryDateTo: '',
+          ...defaultDeliveryDates(),
           buyerEmails: [],
           selectedBuyerEmails: new Set(),
           estimates: []
@@ -745,8 +753,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
           selectedVendors: [],
           selectedPorts: [],
           dateRange: 'This Week',
-          deliveryDateFrom: '',
-          deliveryDateTo: '',
+          ...defaultDeliveryDates(),
           buyerEmails: [],
           selectedBuyerEmails: new Set(),
           estimates: []
@@ -1078,12 +1085,12 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                     <span>Vendor Quotes</span>
                     <div className="flex items-center space-x-3">
                       <label className="flex items-center space-x-2 text-sm font-normal">
-                        <span>Delivery From:</span>
+                        <span>Delivery From: <span className="text-red-500">*</span></span>
                         <input
                           type="date"
                           value={currentFormState.deliveryDateFrom}
                           onChange={(e) => updateCurrentFormState({ deliveryDateFrom: e.target.value })}
-                          className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          className={`border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${!currentFormState.deliveryDateFrom ? 'border-red-400' : 'border-gray-300'}`}
                         />
                         {currentFormState.deliveryDateFrom && (
                           <span className="text-xs text-blue-600">
@@ -1092,12 +1099,12 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                         )}
                       </label>
                       <label className="flex items-center space-x-2 text-sm font-normal">
-                        <span>To:</span>
+                        <span>To: <span className="text-red-500">*</span></span>
                         <input
                           type="date"
                           value={currentFormState.deliveryDateTo}
                           onChange={(e) => updateCurrentFormState({ deliveryDateTo: e.target.value })}
-                          className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          className={`border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${!currentFormState.deliveryDateTo ? 'border-red-400' : 'border-gray-300'}`}
                         />
                         {currentFormState.deliveryDateTo && (
                           <span className="text-xs text-blue-600">

@@ -205,6 +205,13 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
   // Audit log state
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
 
+  // Manual fulfill state
+  const [confirmFulfill, setConfirmFulfill] = useState(false);
+  const [fulfilling, setFulfilling] = useState(false);
+
+  // Timeline state
+  const [timeline, setTimeline] = useState<{ created_at: string; accepted_at: string | null; fulfilled_at: string | null } | null>(null);
+
   // Toast + confirmation state
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [confirmSend, setConfirmSend] = useState<string | null>(null);
@@ -246,15 +253,18 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
     setLoadingDetail(true);
     setCheckedItems(new Set());
     setAuditLog([]);
+    setTimeline(null);
     try {
-      const [poResp, bplResp, auditResp] = await Promise.all([
+      const [poResp, bplResp, auditResp, timelineResp] = await Promise.all([
         fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/items`),
         fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/bpl`),
         fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/audit`),
+        fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/timeline`),
       ]);
       const poData = await poResp.json();
       const bplData = await bplResp.json();
       const auditData = await auditResp.json();
+      const timelineData = await timelineResp.json();
 
       if (poData.success) {
         setSelectedPO(poData.purchase_order);
@@ -273,6 +283,13 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
       }
       if (auditData.success) {
         setAuditLog(auditData.audit || []);
+      }
+      if (timelineData.success) {
+        setTimeline({
+          created_at: timelineData.created_at,
+          accepted_at: timelineData.accepted_at,
+          fulfilled_at: timelineData.fulfilled_at,
+        });
       }
     } catch (err) {
       console.error('Error fetching PO details:', err);
@@ -355,6 +372,36 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
       showToast('error', 'Network error — could not reach the server.');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  /* ── Manual fulfill ── */
+  const handleFulfill = async () => {
+    if (!selectedPO) return;
+    setConfirmFulfill(false);
+    setFulfilling(true);
+    try {
+      const resp = await fetch(
+        `${API_BASE_URL}/vendors/purchase-orders/${selectedPO.id}/fulfill`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actor_name: vendorName, actor_code: vendorCode }),
+        }
+      );
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        showToast('success', 'PO marked as fulfilled.');
+        await fetchPOs();
+        await fetchPODetail(selectedPO.id);
+      } else {
+        showToast('error', data.detail || 'Failed to mark as fulfilled.');
+      }
+    } catch (err) {
+      console.error('Error fulfilling PO:', err);
+      showToast('error', 'Network error — could not reach the server.');
+    } finally {
+      setFulfilling(false);
     }
   };
 
@@ -574,11 +621,56 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                       ✕ Reject PO
                     </button>
                   )}
+                  {selectedPO.status === 'accepted' && (
+                    <button
+                      onClick={() => setConfirmFulfill(true)}
+                      disabled={fulfilling}
+                      title="Mark this PO as fulfilled without a BPL (for vendors managing shipping outside the portal)"
+                      style={{
+                        padding: '7px 18px', backgroundColor: '#f9fafb', color: '#6b7280',
+                        border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px',
+                        fontWeight: 500, cursor: fulfilling ? 'wait' : 'pointer',
+                        opacity: fulfilling ? 0.6 : 1,
+                      }}
+                    >
+                      {fulfilling ? 'Marking…' : '✓ Mark as Fulfilled'}
+                    </button>
+                  )}
                   <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusBadge(selectedPO.status)}`}>
                     {statusLabel(selectedPO.status)}
                   </span>
                 </div>
               </div>
+
+              {/* PO Timeline */}
+              {timeline && (
+                <div style={{ padding: '12px 20px', borderBottom: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0' }}>
+                    {/* Created */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#059669', flexShrink: 0 }} />
+                      <div style={{ fontSize: '10px', fontWeight: 700, color: '#059669', marginTop: '4px', textAlign: 'center' }}>Created</div>
+                      <div style={{ fontSize: '10px', color: '#6b7280', textAlign: 'center' }}>{new Date(timeline.created_at).toLocaleDateString()}</div>
+                    </div>
+                    {/* Connector */}
+                    <div style={{ flex: 1, height: '2px', backgroundColor: timeline.accepted_at ? '#059669' : '#e5e7eb', marginBottom: '20px' }} />
+                    {/* Accepted */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: timeline.accepted_at ? '#059669' : '#d1d5db', flexShrink: 0 }} />
+                      <div style={{ fontSize: '10px', fontWeight: 700, color: timeline.accepted_at ? '#059669' : '#9ca3af', marginTop: '4px', textAlign: 'center' }}>Accepted</div>
+                      <div style={{ fontSize: '10px', color: '#6b7280', textAlign: 'center' }}>{timeline.accepted_at ? new Date(timeline.accepted_at).toLocaleDateString() : '—'}</div>
+                    </div>
+                    {/* Connector */}
+                    <div style={{ flex: 1, height: '2px', backgroundColor: timeline.fulfilled_at ? '#059669' : '#e5e7eb', marginBottom: '20px' }} />
+                    {/* Fulfilled */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: timeline.fulfilled_at ? '#059669' : '#d1d5db', flexShrink: 0 }} />
+                      <div style={{ fontSize: '10px', fontWeight: 700, color: timeline.fulfilled_at ? '#059669' : '#9ca3af', marginTop: '4px', textAlign: 'center' }}>Fulfilled</div>
+                      <div style={{ fontSize: '10px', color: '#6b7280', textAlign: 'center' }}>{timeline.fulfilled_at ? new Date(timeline.fulfilled_at).toLocaleDateString() : '—'}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Instruction bar — context-sensitive */}
               {selectedPO.status === 'sent' && (
@@ -904,6 +996,39 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
               >
                 {actionLoading ? 'Processing…' : 'Reject'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Fulfill Confirmation Dialog ── */}
+      {confirmFulfill && selectedPO && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60,
+        }} onClick={() => setConfirmFulfill(false)}>
+          <div style={{
+            backgroundColor: '#fff', borderRadius: '12px', padding: '28px 32px',
+            maxWidth: '420px', width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            animation: 'poToastIn 0.2s ease-out',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+              ✓ Mark PO as Fulfilled?
+            </div>
+            <p style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.5, margin: '0 0 20px' }}>
+              This will mark <strong>{selectedPO.po_number}</strong> as fulfilled for all accepted ports at once — without requiring a Box Packaging List.
+              <br /><br />
+              Only use this if you are managing shipping details <strong>outside the portal</strong>.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setConfirmFulfill(false)}
+                style={{ padding: '8px 20px', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                onClick={handleFulfill}
+                style={{ padding: '8px 20px', backgroundColor: '#059669', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >Yes, Mark Fulfilled</button>
             </div>
           </div>
         </div>
