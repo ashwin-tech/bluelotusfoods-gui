@@ -724,15 +724,6 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       return;
     }
 
-    // Get company names with better handling
-    const companyNames = [...new Set(otherCompanyIds)]
-      .map(id => {
-        const buyer = buyers.find(b => b.company_id === id);
-        return buyer?.company_name || `Company ID ${id}`;
-      })
-      .join(', ');
-    
-
     // Clone the form state to other companies
     setCompanyFormState(prev => {
       const updated = { ...prev };
