@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PODialog from './PODialog';
 
 interface Company {
@@ -58,6 +58,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   const [notifyBuyer, setNotifyBuyer] = useState(true);
   const [poEstimate, setPoEstimate] = useState<Estimate | null>(null);
   const [poStatusByEstimate, setPoStatusByEstimate] = useState<Map<number, POInfo[]>>(new Map());
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Collapsible sidebar
   const [companyPanelOpen, setCompanyPanelOpen] = useState(true);
@@ -130,20 +131,27 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
       if (data.success) {
         const msg = notifyBuyer && data.buyer_emails?.length
           ? `Estimate #${estimateNumber} sent. Buyer notified: ${data.buyer_emails.join(', ')}`
-          : `Estimate #${estimateNumber} sent. Owner notified only (buyer email skipped).`;
-        alert(msg);
+          : `Estimate #${estimateNumber} sent. Owner notified only.`;
+        setToast({ type: 'success', message: msg });
         if (selectedCompanyId) fetchCompanyEstimates(selectedCompanyId);
       } else {
-        alert(`Failed to send estimate: ${data.detail || 'Unknown error'}`);
+        setToast({ type: 'error', message: `Failed to send estimate: ${data.detail || 'Unknown error'}` });
       }
     } catch (error) {
       console.error('Error sending estimate:', error);
-      alert('Failed to send estimate. Please try again.');
+      setToast({ type: 'error', message: 'Failed to send estimate. Please try again.' });
     } finally {
       setSendingEstimateId(null);
-      setNotifyBuyer(true); // reset for next use
+      setNotifyBuyer(true);
     }
   };
+
+  useEffect(() => {
+    if (toast?.type === 'success') {
+      const t = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
 
   const handleCompanySelect = (companyId: number) => {
     setSelectedCompanyId(companyId);
@@ -225,6 +233,20 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
 
       {/* Estimates Display */}
       <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Toast */}
+        {toast && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 16px', borderRadius: '8px', marginBottom: '10px',
+            backgroundColor: toast.type === 'success' ? '#d1fae5' : '#fee2e2',
+            color: toast.type === 'success' ? '#065f46' : '#991b1b',
+            fontSize: '13px', fontWeight: 500,
+          }}>
+            <span>{toast.type === 'success' ? '✅' : '❌'} {toast.message}</span>
+            <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, color: 'inherit', marginLeft: '12px' }}>×</button>
+          </div>
+        )}
+
         {/* Toggle button */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
           <button

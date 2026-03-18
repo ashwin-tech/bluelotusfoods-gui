@@ -143,6 +143,8 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   const [orderWeights, setOrderWeights] = useState<OrderWeights>({});
   // Track which vendors already have POs (keyed by vendor_id)
   const [sentPOs, setSentPOs] = useState<Record<number, SentPO>>({});
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [cancelConfirm, setCancelConfirm] = useState<SentPO | null>(null);
   // Timeline data per po_id
   const [poTimelines, setPoTimelines] = useState<Record<number, { created_at: string; accepted_at: string | null; fulfilled_at: string | null }>>({});
   // Editable delivery date range — defaults from estimate, or today+3 / today+5
@@ -164,6 +166,13 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   useEffect(() => {
     fetchVendorQuotes();
   }, []);
+
+  useEffect(() => {
+    if (toast?.type === 'success') {
+      const t = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
 
   // Pre-populate order weights from existing PO items when dialog reopens for a sent PO
   useEffect(() => {
@@ -383,7 +392,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   const handleSendPO = async (group: VendorGroup) => {
     const quote = group.vendorQuote;
     if (!quote) {
-      alert('No linked vendor quote found.');
+      setToast({ type: 'error', message: 'No linked vendor quote found.' });
       return;
     }
 
@@ -408,18 +417,14 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     }).filter((l) => l.order_weight_lbs > 0);
 
     if (linesWithWeights.length === 0) {
-      alert('Please enter weight (lbs) for at least one line.');
+      setToast({ type: 'error', message: 'Please enter weight (lbs) for at least one line.' });
       return;
     }
 
     if (!deliveryDateFrom || !deliveryDateTo) {
-      alert('Please set both delivery From and To dates before sending the PO.');
+      setToast({ type: 'error', message: 'Please set both delivery From and To dates before sending the PO.' });
       return;
     }
-
-    // estimate_id matches the suffix of estimate_number (EST-YYYY-MM-{id})
-    const poNumber = `PO-${group.quote_id}-${estimate.id}-${quote.vendor_code}`;
-    if (!confirm(`Send ${poNumber} to ${group.vendor_name} for ${linesWithWeights.length} line(s)?`)) return;
 
     setSendingVendorId(group.vendor_id);
     try {
@@ -442,7 +447,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
           ...prev,
           [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] },
         }));
-        alert(`✅ ${data.po_number} created successfully (${data.item_count} items)`);
+        setToast({ type: 'success', message: `${data.po_number} sent — ${data.item_count} item(s)` });
         onPOSent?.();
       } else {
         if (data.po_number && data.po_id) {
@@ -451,18 +456,24 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
             [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] },
           }));
         }
-        alert(data.detail || 'Failed to create PO');
+        setToast({ type: 'error', message: data.detail || 'Failed to create PO' });
       }
     } catch (err) {
       console.error('Error creating PO:', err);
-      alert('Failed to create PO. Please try again.');
+      setToast({ type: 'error', message: 'Failed to create PO. Please try again.' });
     } finally {
       setSendingVendorId(null);
     }
   };
 
-  const handleCancelPO = async (sentPO: SentPO) => {
-    if (!confirm(`Cancel ${sentPO.po_number}? This cannot be undone.`)) return;
+  const handleCancelPO = (sentPO: SentPO) => {
+    setCancelConfirm(sentPO);
+  };
+
+  const confirmCancelPO = async () => {
+    const sentPO = cancelConfirm;
+    if (!sentPO) return;
+    setCancelConfirm(null);
     try {
       const resp = await fetch(
         `${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/${sentPO.po_id}/cancel`,
@@ -483,11 +494,11 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         }));
         onPOSent?.();
       } else {
-        alert(data.detail || 'Failed to cancel PO');
+        setToast({ type: 'error', message: data.detail || 'Failed to cancel PO' });
       }
     } catch (err) {
       console.error('Error cancelling PO:', err);
-      alert('Failed to cancel PO. Please try again.');
+      setToast({ type: 'error', message: 'Failed to cancel PO. Please try again.' });
     }
   };
 
@@ -519,6 +530,46 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+          {/* Toast */}
+          {toast && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 16px', borderRadius: '8px',
+              backgroundColor: toast.type === 'success' ? '#d1fae5' : '#fee2e2',
+              color: toast.type === 'success' ? '#065f46' : '#991b1b',
+              fontSize: '13px', fontWeight: 500,
+            }}>
+              <span>{toast.type === 'success' ? '✅' : '❌'} {toast.message}</span>
+              <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, color: 'inherit', marginLeft: '12px' }}>×</button>
+            </div>
+          )}
+
+          {/* Cancel confirmation banner */}
+          {cancelConfirm && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderRadius: '8px',
+              backgroundColor: '#fff7ed', border: '1px solid #fed7aa',
+              color: '#9a3412', fontSize: '13px', fontWeight: 500,
+            }}>
+              <span>Cancel <strong>{cancelConfirm.po_number}</strong>? This cannot be undone.</span>
+              <div style={{ display: 'flex', gap: '8px', marginLeft: '16px' }}>
+                <button
+                  onClick={confirmCancelPO}
+                  style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', backgroundColor: '#dc2626', color: '#fff', border: 'none' }}
+                >
+                  Yes, Cancel PO
+                </button>
+                <button
+                  onClick={() => setCancelConfirm(null)}
+                  style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db' }}
+                >
+                  Keep
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading && (
             <div className="text-center text-gray-500 py-12">Loading vendor quotes…</div>
           )}
