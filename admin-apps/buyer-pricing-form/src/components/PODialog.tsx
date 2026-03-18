@@ -440,7 +440,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       if (data.success) {
         setSentPOs((prev) => ({
           ...prev,
-          [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
+          [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] },
         }));
         alert(`✅ ${data.po_number} created successfully (${data.item_count} items)`);
         onPOSent?.();
@@ -448,7 +448,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         if (data.po_number && data.po_id) {
           setSentPOs((prev) => ({
             ...prev,
-            [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id },
+            [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] },
           }));
         }
         alert(data.detail || 'Failed to create PO');
