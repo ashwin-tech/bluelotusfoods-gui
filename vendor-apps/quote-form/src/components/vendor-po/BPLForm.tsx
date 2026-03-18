@@ -202,6 +202,8 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
   const [packedDate, setPackedDate] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [boxEntries, setBoxEntries] = useState<BoxEntry[]>([]);
+  // Separate string state for # pieces input so intermediate (empty) values are allowed
+  const [piecesInput, setPiecesInput] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [savingType, setSavingType] = useState<'draft' | 'completed' | null>(null);
   const [error, setError] = useState('');
@@ -217,13 +219,14 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
 
   /* ── init from existing or defaults ── */
   useEffect(() => {
+    let entries: BoxEntry[];
     if (existingBPL && existingBPL.boxes.length > 0) {
       setNotes(existingBPL.notes || '');
       setInvoiceNumber(existingBPL.invoice_number || '');
       setAirWayBill(existingBPL.air_way_bill || '');
       setPackedDate(existingBPL.packed_date || '');
       setExpiryDate(existingBPL.expiry_date || '');
-      setBoxEntries(existingBPL.boxes.map((b, i) => ({
+      entries = existingBPL.boxes.map((b, i) => ({
         key: `existing-${i}`,
         po_item_id: b.po_item_id,
         box_number: b.box_number,
@@ -234,15 +237,20 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
               weight_kg: String(p.weight_kg),
             }))
           : [makePiece(1)],
-      })));
+      }));
     } else {
-      setBoxEntries(selectedItems.map((item, i) => ({
+      entries = selectedItems.map((item, i) => ({
         key: `new-${item.id}-${i}`,
         po_item_id: item.id,
         box_number: i + 1,
         pieces: [makePiece(1)],
-      })));
+      }));
     }
+    setBoxEntries(entries);
+    // Seed piecesInput from the initialised entries
+    const initPieces: Record<string, string> = {};
+    entries.forEach(e => { initPieces[e.key] = String(e.pieces.length); });
+    setPiecesInput(initPieces);
   }, [existingBPL, selectedItems]);
 
   /* ── scroll to error when set ── */
@@ -287,12 +295,14 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
   const addBox = (poItemId: number) => {
     const existing = boxEntries.filter(b => b.po_item_id === poItemId);
     const maxBox = existing.reduce((m, b) => Math.max(m, b.box_number), 0);
+    const newKey = `add-${poItemId}-${Date.now()}`;
     setBoxEntries(prev => [...prev, {
-      key: `add-${poItemId}-${Date.now()}`,
+      key: newKey,
       po_item_id: poItemId,
       box_number: maxBox + 1,
       pieces: [makePiece(1)],
     }]);
+    setPiecesInput(prev => ({ ...prev, [newKey]: '1' }));
   };
 
   const removeBox = (boxKey: string) => {
@@ -665,7 +675,8 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                               type="text"
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              value={box.box_number || ''}
+                              value={box.box_number === 0 ? '' : String(box.box_number)}
+                              onFocus={e => e.target.select()}
                               onChange={e => {
                                 const v = e.target.value.replace(/[^0-9]/g, '');
                                 updateBoxNumber(box.key, v === '' ? 0 : parseInt(v));
@@ -681,10 +692,19 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                               type="text"
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              value={box.pieces.length}
+                              value={piecesInput[box.key] ?? String(box.pieces.length)}
+                              onFocus={e => e.target.select()}
                               onChange={e => {
                                 const v = e.target.value.replace(/[^0-9]/g, '');
-                                setNumPieces(box.key, v === '' ? 1 : parseInt(v));
+                                setPiecesInput(prev => ({ ...prev, [box.key]: v }));
+                                if (v !== '') setNumPieces(box.key, parseInt(v));
+                              }}
+                              onBlur={() => {
+                                const v = piecesInput[box.key];
+                                if (!v || parseInt(v) < 1) {
+                                  setNumPieces(box.key, 1);
+                                  setPiecesInput(prev => ({ ...prev, [box.key]: '1' }));
+                                }
                               }}
                               style={{ ...S.inputSmall, textAlign: 'center' }}
                             />
