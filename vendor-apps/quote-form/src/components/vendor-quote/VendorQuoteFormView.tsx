@@ -216,7 +216,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                 value={dest.arrivalDate || ""}
                 onChange={(e) => handleDestinationChange(idx, e)}
                 required
-                style={{ width: '100%', boxSizing: 'border-box' }}
+                style={{ width: '100%', boxSizing: 'border-box', minHeight: '40px' }}
                 className="form-input border-red-300 focus:ring-red-400"
               />
               <input
