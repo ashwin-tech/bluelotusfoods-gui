@@ -90,6 +90,7 @@ interface CompanyFormState {
 }
 
 const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [mainTab, setMainTab] = useState<'buyer-pricing' | 'clearing-pricing' | 'summary'>('buyer-pricing');
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [selectedBuyers, setSelectedBuyers] = useState<number[]>([]);
@@ -426,7 +427,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       .map(b => b.id);
     
     if (currentCompanyBuyerIds.length === 0 || formState.selectedVendors.length === 0) {
-      alert('Please select at least one vendor');
+      setToast({ type: 'error', message: 'Please select at least one vendor' });
       return;
     }
 
@@ -476,7 +477,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       updateCurrentFormState({ estimates: mergedEstimates });
     } catch (error) {
       console.error('Error searching estimates:', error);
-      alert('Error fetching estimates');
+      setToast({ type: 'error', message: 'Error fetching estimates' });
     } finally {
       setLoading(false);
     }
@@ -492,7 +493,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     )];
 
     if (allCompanyIds.length === 0) {
-      alert('No companies selected');
+      setToast({ type: 'error', message: 'No companies selected' });
       return;
     }
 
@@ -535,20 +536,9 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     });
 
     if (companiesWithSelections.length === 0) {
-      alert('No quotes selected in any company. Please select at least one quote using the checkboxes.');
+      setToast({ type: 'error', message: 'No quotes selected. Please select at least one quote using the checkboxes.' });
       return;
     }
-
-    // Confirm before saving
-    const companyList = companiesWithSelections
-      .map(c => `${c.companyName} (${c.selectedCount} quote${c.selectedCount > 1 ? 's' : ''})`)
-      .join('\n');
-    
-    const confirmSave = window.confirm(
-      `Save estimates for the following companies?\n\n${companyList}\n\nThis will create ${companiesWithSelections.length} estimate${companiesWithSelections.length > 1 ? 's' : ''}.`
-    );
-
-    if (!confirmSave) return;
 
     setLoading(true);
     const savedEstimates: string[] = [];
@@ -649,11 +639,15 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
         message += `✗ Failed to save ${failedEstimates.length} estimate${failedEstimates.length > 1 ? 's' : ''}:\n\n${failedEstimates.map(f => `${f.company}: ${f.error}`).join('\n')}`;
       }
       
-      alert(message);
-      
+      const toastType = failedEstimates.length === 0 ? 'success' : 'error';
+      const toastMsg = failedEstimates.length === 0
+        ? `${savedEstimates.length} estimate${savedEstimates.length > 1 ? 's' : ''} saved successfully`
+        : `${savedEstimates.length} saved, ${failedEstimates.length} failed: ${failedEstimates.map(f => f.company).join(', ')}`;
+      setToast({ type: toastType, message: toastMsg });
+
     } catch (error) {
       console.error('Error saving estimates:', error);
-      alert('Error saving estimates: ' + error);
+      setToast({ type: 'error', message: 'Error saving estimates. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -726,7 +720,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     )];
 
     if (otherCompanyIds.length === 0) {
-      alert('No other companies selected to clone to.');
+      setToast({ type: 'error', message: 'No other companies selected to clone to.' });
       return;
     }
 
@@ -738,11 +732,6 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       })
       .join(', ');
     
-    const confirmClone = window.confirm(
-      `Clone current selections to:\n${companyNames}\n\nThis will copy vendors, ports, date range, delivery dates, margins, and quote selections.`
-    );
-    
-    if (!confirmClone) return;
 
     // Clone the form state to other companies
     setCompanyFormState(prev => {
@@ -784,8 +773,15 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       return updated;
     });
 
-    alert(`Selections cloned to ${otherCompanyIds.length} other ${otherCompanyIds.length === 1 ? 'company' : 'companies'}!`);
+    setToast({ type: 'success', message: `Selections cloned to ${otherCompanyIds.length} other ${otherCompanyIds.length === 1 ? 'company' : 'companies'}` });
   };
+
+  useEffect(() => {
+    if (toast?.type === 'success') {
+      const t = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
 
   // Get current form state for rendering
   const currentFormState = getCurrentFormState();
@@ -798,6 +794,22 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
 
   return (
     <div className="w-full min-h-screen p-4 bg-gray-50">
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 9999, minWidth: '320px', maxWidth: '600px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 18px', borderRadius: '10px',
+          backgroundColor: toast.type === 'success' ? '#d1fae5' : '#fee2e2',
+          color: toast.type === 'success' ? '#065f46' : '#991b1b',
+          fontSize: '13px', fontWeight: 500,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        }}>
+          <span>{toast.type === 'success' ? '✅' : '❌'} {toast.message}</span>
+          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, color: 'inherit', marginLeft: '16px' }}>×</button>
+        </div>
+      )}
       <div className="w-full bg-white shadow-md rounded-lg space-y-4">
       {/* Main Tabs - Buyer Pricing / Clearing Pricing */}
       <div className="border-b-2 border-gray-200 px-4 pt-4">
