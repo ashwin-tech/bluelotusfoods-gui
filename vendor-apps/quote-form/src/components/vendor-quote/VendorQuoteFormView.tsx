@@ -88,7 +88,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
           </div>
 
           {/* Row 1 right — Quote Valid Till */}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 min-w-0">
             <label htmlFor="quoteValidTill">Quote Valid Till</label>
             <input
               type="date"
@@ -97,7 +97,8 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
               placeholder="Select Date"
               value={formData.quoteValidTill || ""}
               onChange={handleChange}
-              className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 w-full"
+              style={{ width: '100%', boxSizing: 'border-box' }}
+              className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
           </div>
 
@@ -211,13 +212,11 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
               />
               <input
                 name="arrivalDate"
-                type="text" // Change to text to avoid Safari's ghost value issue
-                placeholder="Select Date"
-                value={dest.arrivalDate || ""} // Explicitly set empty string if no value
-                onFocus={(e) => (e.target.type = "date")} // Change to date on focus
-                onBlur={(e) => (e.target.type = "text")} // Revert to text on blur
+                type="date"
+                value={dest.arrivalDate || ""}
                 onChange={(e) => handleDestinationChange(idx, e)}
                 required
+                style={{ width: '100%', boxSizing: 'border-box' }}
                 className="form-input border-red-300 focus:ring-red-400"
               />
               <input
