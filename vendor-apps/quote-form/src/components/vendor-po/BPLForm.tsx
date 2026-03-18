@@ -66,6 +66,8 @@ interface BPLFormProps {
   onSaved: () => void;
 }
 
+type BPLMode = 'manual' | 'upload';
+
 /* ─── Styles (inline to avoid Tailwind v4 issues) ──── */
 
 const S: Record<string, React.CSSProperties> = {
@@ -190,6 +192,10 @@ const calcBoxTotal = (pieces: Piece[]): number =>
 /* ─── Component ─────────────────────────────────── */
 
 const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existingBPL, onClose, onSaved }) => {
+  // Determine initial mode: if existing BPL was uploaded, start in upload mode
+  const initialMode: BPLMode = existingBPL && (existingBPL as any).uploaded_file_name ? 'upload' : 'manual';
+  const [mode, setMode] = useState<BPLMode>(initialMode);
+
   const [notes, setNotes] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [airWayBill, setAirWayBill] = useState('');
@@ -202,6 +208,12 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
   const [successMsg, setSuccessMsg] = useState('');
   const errorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Upload mode state
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [existingFileName, setExistingFileName] = useState<string | null>(
+    existingBPL ? (existingBPL as any).uploaded_file_name || null : null
+  );
 
   /* ── init from existing or defaults ── */
   useEffect(() => {
@@ -353,6 +365,45 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
     }
   };
 
+  /* ── upload save ── */
+  const doUpload = async () => {
+    if (!uploadFile) { setError('Please select a file to upload'); return; }
+    setError('');
+    setSuccessMsg('');
+    setSaving(true);
+    setSavingType('completed');
+    try {
+      const formData = new FormData();
+      formData.append('po_id', String(poId));
+      formData.append('port_code', portCode);
+      if (invoiceNumber) formData.append('invoice_number', invoiceNumber);
+      if (airWayBill) formData.append('air_way_bill', airWayBill);
+      if (packedDate) formData.append('packed_date', packedDate);
+      if (expiryDate) formData.append('expiry_date', expiryDate);
+      if (notes) formData.append('notes', notes);
+      formData.append('file', uploadFile);
+
+      const resp = await fetch(`${API_BASE_URL}/vendors/purchase-orders/bpl/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await resp.json();
+      if (data.success) {
+        setSuccessMsg(`✓ Document uploaded: ${uploadFile.name}`);
+        setExistingFileName(uploadFile.name);
+        if (bodyRef.current) bodyRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        setTimeout(() => { onSaved(); }, 1200);
+      } else {
+        setError(data.detail || 'Upload failed');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Network error');
+    } finally {
+      setSaving(false);
+      setSavingType(null);
+    }
+  };
+
   /* ── group boxes by po_item_id ── */
   const groupedByItem: Map<number, BoxEntry[]> = new Map();
   for (const entry of boxEntries) {
@@ -395,6 +446,34 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
               <span style={{ fontSize: '20px' }}>✅</span> {successMsg}
             </div>
           )}
+
+          {/* ── Mode toggle ── */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <button
+              onClick={() => { setMode('manual'); setError(''); }}
+              style={{
+                flex: 1, padding: '8px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
+                cursor: 'pointer', border: '2px solid',
+                borderColor: mode === 'manual' ? '#0A3D5C' : '#e2e8f0',
+                backgroundColor: mode === 'manual' ? '#0A3D5C' : '#fff',
+                color: mode === 'manual' ? '#fff' : '#6b7280',
+              }}
+            >
+              ✏️ Manual Entry
+            </button>
+            <button
+              onClick={() => { setMode('upload'); setError(''); }}
+              style={{
+                flex: 1, padding: '8px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
+                cursor: 'pointer', border: '2px solid',
+                borderColor: mode === 'upload' ? '#0A3D5C' : '#e2e8f0',
+                backgroundColor: mode === 'upload' ? '#0A3D5C' : '#fff',
+                color: mode === 'upload' ? '#fff' : '#6b7280',
+              }}
+            >
+              📎 Upload Document
+            </button>
+          </div>
 
           {/* ── Shipment header fields ── */}
           <div style={{
@@ -470,7 +549,50 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
             </div>
           </div>
 
+          {/* ── Upload panel (upload mode only) ── */}
+          {mode === 'upload' && (
+            <div style={{
+              marginBottom: '18px', padding: '16px',
+              backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px',
+            }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#0369a1', marginBottom: '10px' }}>
+                Upload BPL Document
+              </div>
+              {existingFileName && !uploadFile && (
+                <div style={{
+                  marginBottom: '10px', padding: '8px 12px',
+                  backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '6px',
+                  fontSize: '12px', color: '#065f46', display: 'flex', alignItems: 'center', gap: '6px',
+                }}>
+                  <span>📄</span>
+                  <span>Current file: <strong>{existingFileName}</strong></span>
+                  <span style={{ color: '#9ca3af' }}>(select a new file to replace)</span>
+                </div>
+              )}
+              <input
+                type="file"
+                accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png"
+                onChange={e => setUploadFile(e.target.files?.[0] || null)}
+                style={{
+                  display: 'block', width: '100%',
+                  padding: '8px', border: '1px dashed #93c5fd', borderRadius: '6px',
+                  backgroundColor: '#fff', fontSize: '13px', cursor: 'pointer',
+                }}
+              />
+              {uploadFile && (
+                <div style={{ marginTop: '8px', fontSize: '12px', color: '#0369a1' }}>
+                  Selected: <strong>{uploadFile.name}</strong> ({(uploadFile.size / 1024).toFixed(1)} KB)
+                </div>
+              )}
+              <div style={{ marginTop: '8px', fontSize: '11px', color: '#64748b' }}>
+                Accepted: PDF, Excel (.xlsx/.xls), JPG, PNG
+              </div>
+            </div>
+          )}
+
           {/* Reference: selected PO items */}
+          {mode === 'manual' && (
+          <>
           <div style={{ ...S.sectionTitle, marginTop: 0 }}>PO Items (reference)</div>
           <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           <table style={{ ...S.table, minWidth: '400px' }}>
@@ -619,6 +741,9 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
             );
           })}
 
+          </>
+          )}
+
           {/* Notes */}
           <div style={S.sectionTitle}>Notes (optional)</div>
           <textarea
@@ -644,26 +769,41 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
         {/* Footer */}
         <div style={S.footer}>
           <button onClick={onClose} style={S.btnCancel} disabled={saving || !!successMsg}>Cancel</button>
-          <button
-            onClick={() => doSave('draft')}
-            disabled={saving || !!successMsg}
-            style={{ ...S.btnPrimary, opacity: (saving || successMsg) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            {savingType === 'draft' && (
-              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
-            )}
-            {savingType === 'draft' ? 'Saving…' : '💾 Save Draft'}
-          </button>
-          <button
-            onClick={() => doSave('completed')}
-            disabled={saving || !!successMsg}
-            style={{ ...S.btnSuccess, opacity: (saving || successMsg) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            {savingType === 'completed' && (
-              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
-            )}
-            {savingType === 'completed' ? 'Saving…' : '✓ Save & Complete'}
-          </button>
+          {mode === 'manual' ? (
+            <>
+              <button
+                onClick={() => doSave('draft')}
+                disabled={saving || !!successMsg}
+                style={{ ...S.btnPrimary, opacity: (saving || successMsg) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {savingType === 'draft' && (
+                  <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
+                )}
+                {savingType === 'draft' ? 'Saving…' : '💾 Save Draft'}
+              </button>
+              <button
+                onClick={() => doSave('completed')}
+                disabled={saving || !!successMsg}
+                style={{ ...S.btnSuccess, opacity: (saving || successMsg) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {savingType === 'completed' && (
+                  <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
+                )}
+                {savingType === 'completed' ? 'Saving…' : '✓ Save & Complete'}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={doUpload}
+              disabled={saving || !!successMsg || (!uploadFile && !existingFileName)}
+              style={{ ...S.btnSuccess, opacity: (saving || successMsg || (!uploadFile && !existingFileName)) ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              {saving && (
+                <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'bplSpin 0.6s linear infinite' }} />
+              )}
+              {saving ? 'Uploading…' : uploadFile ? '📎 Upload Document' : existingFileName ? '✓ Already Uploaded' : '📎 Upload Document'}
+            </button>
+          )}
         </div>
       </div>
     </div>
