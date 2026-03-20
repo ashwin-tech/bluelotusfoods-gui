@@ -516,7 +516,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
         </button>
         <div className="flex items-center space-x-2">
           <span className="text-sm font-semibold text-gray-700">{formatWeekLabel(weekStart)}</span>
-          <input type="date" value={formatDate(weekStart)} onChange={handleWeekInput} className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+          <input type="date" value={formatDate(weekStart)} onChange={handleWeekInput} style={{ minWidth: '130px', boxSizing: 'border-box' }} className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </div>
         <button onClick={goToNextWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors text-gray-600" title="Next week">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>

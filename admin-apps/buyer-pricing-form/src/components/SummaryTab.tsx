@@ -187,15 +187,15 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
     const groupKeys = Object.keys(itemsByGroup).sort((a, b) => {
       const itemsA = itemsByGroup[a][0];
       const itemsB = itemsByGroup[b][0];
+      const portCompare = (itemsA?.port_code || '').localeCompare(itemsB?.port_code || '');
+      if (portCompare !== 0) return portCompare;
       const fishCompare = (itemsA?.common_name || '').localeCompare(itemsB?.common_name || '');
       if (fishCompare !== 0) return fishCompare;
       const cutCompare = (itemsA?.cut_name || '').localeCompare(itemsB?.cut_name || '');
       if (cutCompare !== 0) return cutCompare;
       const gradeCompare = (itemsA?.grade_name || '').localeCompare(itemsB?.grade_name || '');
       if (gradeCompare !== 0) return gradeCompare;
-      const sizeCompare = (itemsA?.fish_size || '').localeCompare(itemsB?.fish_size || '');
-      if (sizeCompare !== 0) return sizeCompare;
-      return (itemsA?.port_code || '').localeCompare(itemsB?.port_code || '');
+      return (itemsA?.fish_size || '').localeCompare(itemsB?.fish_size || '');
     });
 
     return { itemsByGroup, groupKeys };
@@ -414,7 +414,12 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                             <div key={groupKey} className="border-l-4 border-blue-400 pl-4">
                               <div className="flex items-center justify-between mb-3">
                                 <h4 className="text-md font-semibold text-gray-700">{groupLabel}</h4>
-                                <span className="text-sm text-gray-600 font-medium">Port: {firstItem.port_code}</span>
+                                <span className="text-sm text-gray-600 font-medium">
+                                  Port: {firstItem.port_code}
+                                  {firstItem.margin > 0 && (
+                                    <span className="ml-2 font-semibold" style={{ color: '#16a34a' }}>+${firstItem.margin.toFixed(2)}/lb</span>
+                                  )}
+                                </span>
                               </div>
                               <div className="overflow-x-auto">
                                 <table className="min-w-full text-sm">

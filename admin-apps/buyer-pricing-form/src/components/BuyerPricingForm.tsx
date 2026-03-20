@@ -165,8 +165,8 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
         // Recalculate total: ((Fish Price + Margin) + Tariff on (Fish Price + Margin)) + Freight Price
         const fishPriceWithMargin = estimate.fish_price + newMargin;
         const tariffAmount = (fishPriceWithMargin * estimate.tariff_percent) / 100;
-        const newTotal = fishPriceWithMargin + tariffAmount + estimate.freight_price;
-        
+        const newTotal = parseFloat((fishPriceWithMargin + tariffAmount + estimate.freight_price).toFixed(2));
+
         return {
           ...estimate,
           margin: newMargin,
@@ -662,12 +662,33 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     // Recalculate total: ((Fish Price + Margin) + Tariff on (Fish Price + Margin)) + Freight Price
     const fishPriceWithMargin = estimate.fish_price + newMargin;
     const tariffAmount = (fishPriceWithMargin * estimate.tariff_percent) / 100;
-    const newTotal = fishPriceWithMargin + tariffAmount + estimate.freight_price;
-    
+    const newTotal = parseFloat((fishPriceWithMargin + tariffAmount + estimate.freight_price).toFixed(2));
+
     updatedEstimates[index] = {
       ...estimate,
       margin: newMargin,
       total_price: newTotal
+    };
+    updateCurrentFormState({ estimates: updatedEstimates });
+  };
+
+  const handleTotalChange = (index: number, value: string) => {
+    const formState = getCurrentFormState();
+    const updatedEstimates = [...formState.estimates];
+    const estimate = updatedEstimates[index];
+    const newTotal = parseFloat((parseFloat(value) || 0).toFixed(2));
+
+    // Reverse-calculate margin from total
+    // total = (fish_price + margin) * (1 + tariff%/100) + freight_price
+    const tariffFactor = 1 + (estimate.tariff_percent / 100);
+    const newMargin = parseFloat(
+      (((newTotal - estimate.freight_price) / tariffFactor) - estimate.fish_price).toFixed(4)
+    );
+
+    updatedEstimates[index] = {
+      ...estimate,
+      margin: newMargin,
+      total_price: newTotal,
     };
     updateCurrentFormState({ estimates: updatedEstimates });
   };
@@ -1093,6 +1114,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                           type="date"
                           value={currentFormState.deliveryDateFrom}
                           onChange={(e) => updateCurrentFormState({ deliveryDateFrom: e.target.value })}
+                          style={{ minWidth: '140px', boxSizing: 'border-box' }}
                           className={`border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${!currentFormState.deliveryDateFrom ? 'border-red-400' : 'border-gray-300'}`}
                         />
                         {currentFormState.deliveryDateFrom && (
@@ -1107,6 +1129,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                           type="date"
                           value={currentFormState.deliveryDateTo}
                           onChange={(e) => updateCurrentFormState({ deliveryDateTo: e.target.value })}
+                          style={{ minWidth: '140px', boxSizing: 'border-box' }}
                           className={`border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${!currentFormState.deliveryDateTo ? 'border-red-400' : 'border-gray-300'}`}
                         />
                         {currentFormState.deliveryDateTo && (
@@ -1238,7 +1261,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                                         <input
                                           type="number"
                                           step="0.01"
-                                          value={estimate.margin}
+                                          value={parseFloat(estimate.margin.toFixed(2))}
                                           onChange={(e) => handleMarginChange(globalIdx, e.target.value)}
                                           className="w-16 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
                                         />
@@ -1246,7 +1269,18 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                                     </td>
                                     <td className="px-4 py-2">${estimate.freight_price.toFixed(2)}</td>
                                     <td className="px-4 py-2">{estimate.tariff_percent}%</td>
-                                    <td className="px-4 py-2 font-semibold">${estimate.total_price.toFixed(2)}</td>
+                                    <td className="px-4 py-2">
+                                      <div className="flex items-center">
+                                        <span className="mr-1">$</span>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          value={parseFloat(estimate.total_price.toFixed(2))}
+                                          onChange={(e) => handleTotalChange(globalIdx, e.target.value)}
+                                          className="w-20 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                        />
+                                      </div>
+                                    </td>
                                     <td className="px-4 py-2">
                                       <input 
                                         type="checkbox" 

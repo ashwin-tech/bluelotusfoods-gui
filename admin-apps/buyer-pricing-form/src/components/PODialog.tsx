@@ -816,6 +816,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                                       }
                                                     }
                                                   }}
+                                                  style={{ minWidth: '130px', boxSizing: 'border-box' }}
                                                   className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!deliveryDateFrom ? 'border-yellow-400' : 'border-white/30'}`}
                                                 />
                                                 <span className="text-xs text-white/50">–</span>
@@ -823,6 +824,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                                   type="date"
                                                   value={deliveryDateTo}
                                                   onChange={(e) => setDeliveryDateTo(e.target.value)}
+                                                  style={{ minWidth: '130px', boxSizing: 'border-box' }}
                                                   className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!deliveryDateTo ? 'border-yellow-400' : 'border-white/30'}`}
                                                 />
                                               </div>
