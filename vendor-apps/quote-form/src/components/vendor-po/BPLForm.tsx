@@ -541,7 +541,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                 type="date"
                 value={packedDate}
                 onChange={e => { setPackedDate(e.target.value); e.target.blur(); }}
-                style={{ width: '100%', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#000' }}
+                style={{ width: '100%', minWidth: '130px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#000' }}
               />
             </div>
 
@@ -554,7 +554,7 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                 type="date"
                 value={expiryDate}
                 onChange={e => { setExpiryDate(e.target.value); e.target.blur(); }}
-                style={{ width: '100%', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#000' }}
+                style={{ width: '100%', minWidth: '130px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#000' }}
               />
             </div>
           </div>

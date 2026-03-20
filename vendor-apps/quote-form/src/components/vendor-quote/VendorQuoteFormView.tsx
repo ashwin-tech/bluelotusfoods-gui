@@ -97,7 +97,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
               placeholder="Select Date"
               value={formData.quoteValidTill || ""}
               onChange={handleChange}
-              style={{ width: '100%', boxSizing: 'border-box' }}
+              style={{ width: '100%', boxSizing: 'border-box', minWidth: '140px' }}
               className="border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
           </div>
@@ -216,7 +216,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                 value={dest.arrivalDate || ""}
                 onChange={(e) => handleDestinationChange(idx, e)}
                 required
-                style={{ width: '100%', boxSizing: 'border-box', minHeight: '40px' }}
+                style={{ width: '100%', boxSizing: 'border-box', minHeight: '40px', minWidth: '140px' }}
                 className="form-input border-red-300 focus:ring-red-400"
               />
               <input
