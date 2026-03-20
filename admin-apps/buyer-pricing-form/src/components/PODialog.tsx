@@ -141,6 +141,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   const [sendingVendorId, setSendingVendorId] = useState<number | null>(null);
   const [expandedVendors, setExpandedVendors] = useState<Set<number>>(new Set());
   const [orderWeights, setOrderWeights] = useState<OrderWeights>({});
+  const [selectedLines, setSelectedLines] = useState<Record<string, boolean>>({});
   // Track which vendors already have POs (keyed by vendor_id)
   const [sentPOs, setSentPOs] = useState<Record<number, SentPO>>({});
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -316,6 +317,21 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     });
   };
 
+  // Default all lines to selected when vendor groups load
+  useEffect(() => {
+    if (vendorGroups.length === 0) return;
+    const defaults: Record<string, boolean> = {};
+    vendorGroups.forEach(group => {
+      buildPOLines(group).forEach((_, idx) => {
+        const key = getWeightKey(group.vendor_id, idx);
+        if (!(key in selectedLines)) defaults[key] = true;
+      });
+    });
+    if (Object.keys(defaults).length > 0) {
+      setSelectedLines(prev => ({ ...defaults, ...prev }));
+    }
+  }, [vendorGroups]);
+
   const getWeightKey = (vendorId: number, lineIdx: number) => `${vendorId}-${lineIdx}`;
 
   const handleWeightChange = (vendorId: number, lineIdx: number, value: string) => {
@@ -414,10 +430,11 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         order_weight_lbs: lbs,
         order_weight_kg: kg,
       };
-    }).filter((l) => l.order_weight_lbs > 0);
+    }).filter((_, idx) => selectedLines[getWeightKey(group.vendor_id, idx)] !== false)
+      .filter((l) => l.order_weight_lbs > 0);
 
     if (linesWithWeights.length === 0) {
-      setToast({ type: 'error', message: 'Please enter weight (lbs) for at least one line.' });
+      setToast({ type: 'error', message: 'Please select at least one species and enter its weight (lbs).' });
       return;
     }
 
@@ -762,6 +779,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                             <table className="min-w-full text-sm border border-gray-100">
                               <thead className="bg-blue-50">
                                 <tr>
+                                  <th className="px-2 py-2 text-center text-xs font-medium text-gray-600 w-8"></th>
                                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Fish</th>
                                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Cut</th>
                                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Grade</th>
@@ -790,7 +808,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                       {showPortHeader && (
                                         <tr>
                                           <td
-                                            colSpan={9}
+                                            colSpan={10}
                                             className="px-3 py-2"
                                             style={{ backgroundColor: '#0A3D5C' }}
                                           >
@@ -832,7 +850,17 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                           </td>
                                         </tr>
                                       )}
-                                      <tr className="hover:bg-gray-50 border-b border-gray-100">
+                                      <tr className={`border-b border-gray-100 ${selectedLines[key] === false ? 'opacity-40' : 'hover:bg-gray-50'}`}>
+                                        <td className="px-2 py-2 text-center">
+                                          {!sentPOs[group.vendor_id] && (
+                                            <input
+                                              type="checkbox"
+                                              checked={selectedLines[key] !== false}
+                                              onChange={(e) => setSelectedLines(prev => ({ ...prev, [key]: e.target.checked }))}
+                                              className="h-4 w-4 accent-emerald-600"
+                                            />
+                                          )}
+                                        </td>
                                         <td className="px-3 py-2 text-gray-900">{line.fish_name}</td>
                                         <td className="px-3 py-2 text-gray-700">{line.cut_name}</td>
                                         <td className="px-3 py-2 text-gray-700">{line.grade_name}</td>
