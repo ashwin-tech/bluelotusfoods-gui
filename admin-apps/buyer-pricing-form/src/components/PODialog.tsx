@@ -146,6 +146,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   const [sentPOs, setSentPOs] = useState<Record<number, SentPO>>({});
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [cancelConfirm, setCancelConfirm] = useState<SentPO | null>(null);
+  const [sendingAll, setSendingAll] = useState(false);
   // Timeline data per po_id
   const [poTimelines, setPoTimelines] = useState<Record<number, { created_at: string; accepted_at: string | null; fulfilled_at: string | null }>>({});
   // Editable delivery date range — defaults from estimate, or today+3 / today+5
@@ -406,12 +407,6 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   };
 
   const handleSendPO = async (group: VendorGroup) => {
-    const quote = group.vendorQuote;
-    if (!quote) {
-      setToast({ type: 'error', message: 'No linked vendor quote found.' });
-      return;
-    }
-
     const poLines = buildPOLines(group);
     const linesWithWeights = poLines.map((line, idx) => {
       const key = getWeightKey(group.vendor_id, idx);
@@ -481,6 +476,55 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     } finally {
       setSendingVendorId(null);
     }
+  };
+
+  const handleSendAllPOs = async () => {
+    if (!deliveryDateFrom || !deliveryDateTo) {
+      setToast({ type: 'error', message: 'Please set both delivery From and To dates before sending POs.' });
+      return;
+    }
+    const pendingGroups = vendorGroups.filter(g => !sentPOs[g.vendor_id]);
+    if (pendingGroups.length === 0) return;
+
+    setSendingAll(true);
+    let sent = 0;
+    let failed = 0;
+    for (const group of pendingGroups) {
+      const poLines = buildPOLines(group);
+      const linesWithWeights = poLines
+        .map((line, idx) => {
+          const key = getWeightKey(group.vendor_id, idx);
+          const lbs = parseFloat(orderWeights[key] || '0');
+          const kg = Math.round((lbs / 2.20462) / 100) * 100;
+          return { fish_name: line.fish_name, cut_name: line.cut_name, grade_name: line.grade_name,
+                   fish_size: line.fish_size || null, port_code: line.port_code, destination_name: line.destination_name,
+                   price_per_kg: line.price_per_kg, airfreight_per_kg: line.airfreight_per_kg,
+                   total_per_kg: line.price_per_kg + line.airfreight_per_kg, order_weight_lbs: lbs, order_weight_kg: kg };
+        })
+        .filter((_, idx) => selectedLines[getWeightKey(group.vendor_id, idx)] !== false)
+        .filter(l => l.order_weight_lbs > 0);
+
+      if (linesWithWeights.length === 0) { failed++; continue; }
+      try {
+        const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quote_id: group.quote_id, estimate_id: estimate.id, vendor_id: group.vendor_id,
+                                 items: linesWithWeights, delivery_date_from: deliveryDateFrom, delivery_date_to: deliveryDateTo }),
+        });
+        const data = await resp.json();
+        if (data.success || (data.po_number && data.po_id)) {
+          setSentPOs(prev => ({ ...prev, [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] } }));
+          sent++;
+        } else {
+          failed++;
+        }
+      } catch { failed++; }
+    }
+    setSendingAll(false);
+    if (sent > 0) onPOSent?.();
+    if (failed === 0) setToast({ type: 'success', message: `${sent} PO${sent > 1 ? 's' : ''} sent successfully` });
+    else setToast({ type: 'error', message: `${sent} sent, ${failed} failed — check weights for skipped vendors` });
   };
 
   const handleCancelPO = (sentPO: SentPO) => {
@@ -688,11 +732,9 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                             e.stopPropagation();
                             handleSendPO(group);
                           }}
-                          disabled={sendingVendorId === group.vendor_id || !quote}
+                          disabled={sendingVendorId === group.vendor_id}
                           className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                            !quote
-                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                              : sendingVendorId === group.vendor_id
+                            sendingVendorId === group.vendor_id
                               ? 'bg-emerald-400 text-white cursor-wait'
                               : 'bg-emerald-600 text-white hover:bg-emerald-700'
                           }`}
@@ -767,7 +809,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                       )}
 
                       {/* PO lines: product × port with freight and editable weight */}
-                      {quote && (() => {
+                      {(() => {
                         const poLines = buildPOLines(group);
                         if (poLines.length === 0) return (
                           <div className="text-center text-gray-500 text-sm py-4">
@@ -923,7 +965,22 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-gray-200 flex justify-end">
+        <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+          <div>
+            {vendorGroups.filter(g => !sentPOs[g.vendor_id]).length > 1 && (
+              <button
+                onClick={handleSendAllPOs}
+                disabled={sendingAll}
+                className={`px-4 py-2 text-sm font-medium rounded transition-colors ${
+                  sendingAll
+                    ? 'bg-emerald-400 text-white cursor-wait'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                }`}
+              >
+                {sendingAll ? 'Sending…' : `Send All POs (${vendorGroups.filter(g => !sentPOs[g.vendor_id]).length} vendors)`}
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
