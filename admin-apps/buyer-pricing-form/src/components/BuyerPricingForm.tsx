@@ -162,10 +162,9 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     const formState = getCurrentFormState();
     const updatedEstimates = formState.estimates.map(estimate => {
       if (estimate.vendor_name === vendorName) {
-        // Recalculate total: ((Fish Price + Margin) + Tariff on (Fish Price + Margin)) + Freight Price
-        const fishPriceWithMargin = estimate.fish_price + newMargin;
-        const tariffAmount = (fishPriceWithMargin * estimate.tariff_percent) / 100;
-        const newTotal = parseFloat((fishPriceWithMargin + tariffAmount + estimate.freight_price).toFixed(2));
+        // Tariff on fish price only; margin added after
+        const tariffAmount = (estimate.fish_price * estimate.tariff_percent) / 100;
+        const newTotal = parseFloat((estimate.fish_price + tariffAmount + newMargin + estimate.freight_price + estimate.clearing_charges).toFixed(2));
 
         return {
           ...estimate,
@@ -659,10 +658,9 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     const estimate = updatedEstimates[index];
     const newMargin = parseFloat(value) || 0;
     
-    // Recalculate total: ((Fish Price + Margin) + Tariff on (Fish Price + Margin)) + Freight Price
-    const fishPriceWithMargin = estimate.fish_price + newMargin;
-    const tariffAmount = (fishPriceWithMargin * estimate.tariff_percent) / 100;
-    const newTotal = parseFloat((fishPriceWithMargin + tariffAmount + estimate.freight_price).toFixed(2));
+    // Tariff on fish price only; margin added after
+    const tariffAmount = (estimate.fish_price * estimate.tariff_percent) / 100;
+    const newTotal = parseFloat((estimate.fish_price + tariffAmount + newMargin + estimate.freight_price + estimate.clearing_charges).toFixed(2));
 
     updatedEstimates[index] = {
       ...estimate,
@@ -678,11 +676,10 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     const estimate = updatedEstimates[index];
     const newTotal = parseFloat((parseFloat(value) || 0).toFixed(2));
 
-    // Reverse-calculate margin from total
-    // total = (fish_price + margin) * (1 + tariff%/100) + freight_price
-    const tariffFactor = 1 + (estimate.tariff_percent / 100);
+    // Reverse-calculate margin: total = fish + tariff_on_fish + margin + freight + clearing
+    const tariffAmount = (estimate.fish_price * estimate.tariff_percent) / 100;
     const newMargin = parseFloat(
-      (((newTotal - estimate.freight_price) / tariffFactor) - estimate.fish_price).toFixed(4)
+      (newTotal - estimate.fish_price - tariffAmount - estimate.freight_price - estimate.clearing_charges).toFixed(4)
     );
 
     updatedEstimates[index] = {

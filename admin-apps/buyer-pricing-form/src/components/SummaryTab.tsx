@@ -435,10 +435,9 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                                   </thead>
                                   <tbody className="bg-white divide-y divide-gray-200">
                                     {groupItems.map((item, idx) => {
-                                      // Calculate Markup Fish Price + Tariff
-                                      const markupFishPrice = (item.fish_price || 0) + (item.margin || 0);
-                                      const tariffAmount = (markupFishPrice * (item.tariff_percent || 0)) / 100;
-                                      const fishPriceTotal = markupFishPrice + tariffAmount;
+                                      // Tariff on fish price only; margin added after
+                                      const tariffAmount = ((item.fish_price || 0) * (item.tariff_percent || 0)) / 100;
+                                      const fishPriceTotal = (item.fish_price || 0) + tariffAmount + (item.margin || 0);
                                       
                                       return (
                                         <tr key={idx} className="hover:bg-gray-50">
