@@ -172,6 +172,26 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
     setExpandedEstimateIds(newExpanded);
   };
 
+  type EstimateCategory = 'pending' | 'sent' | 'po_created' | 'po_accepted' | 'po_rejected';
+
+  const getEstimateCategory = (estimate: Estimate): EstimateCategory => {
+    if (estimate.status === 'draft') return 'pending';
+    const pos = poStatusByEstimate.get(estimate.id);
+    if (!pos || pos.length === 0) return 'sent';
+    const statuses = pos.map(p => p.status);
+    if (statuses.every(s => s === 'cancelled' || s === 'rejected')) return 'po_rejected';
+    if (statuses.some(s => s === 'accepted' || s === 'fulfilled')) return 'po_accepted';
+    return 'po_created';
+  };
+
+  const CATEGORIES: { key: EstimateCategory; label: string; headerStyle: React.CSSProperties; dotColor: string }[] = [
+    { key: 'pending',     label: 'Pending Estimate',       headerStyle: { backgroundColor: '#f3f4f6', borderColor: '#d1d5db', color: '#374151' }, dotColor: '#9ca3af' },
+    { key: 'sent',        label: 'Sent Estimate',           headerStyle: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe', color: '#1d4ed8' }, dotColor: '#3b82f6' },
+    { key: 'po_created',  label: 'Created PO',              headerStyle: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0', color: '#065f46' }, dotColor: '#10b981' },
+    { key: 'po_accepted', label: 'Accepted PO',             headerStyle: { backgroundColor: '#f0fdf4', borderColor: '#86efac', color: '#166534' }, dotColor: '#22c55e' },
+    { key: 'po_rejected', label: 'Rejected / Cancelled PO', headerStyle: { backgroundColor: '#fef2f2', borderColor: '#fecaca', color: '#991b1b' }, dotColor: '#ef4444' },
+  ];
+
   const groupEstimateItems = (items: EstimateItem[]) => {
     const itemsByGroup: Record<string, EstimateItem[]> = {};
     
@@ -292,14 +312,23 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
             <h3 className="text-lg font-semibold mb-4">
               Recent Estimates for {companies.find(c => c.company_id === selectedCompanyId)?.company_name}
             </h3>
-            
-            <div className="space-y-4">
-              {estimates.map((estimate) => {
-                const isExpanded = expandedEstimateIds.has(estimate.id);
-                const { itemsByGroup, groupKeys } = groupEstimateItems(estimate.items || []);
-                const groupCount = groupKeys.length;
-                
-                return (
+
+            {CATEGORIES.map(({ key, label, headerStyle, dotColor }) => {
+              const categoryEstimates = estimates.filter(e => getEstimateCategory(e) === key);
+              if (categoryEstimates.length === 0) return null;
+              return (
+                <div key={key} className="space-y-3 mb-4">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '6px', border: '1px solid', ...headerStyle }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: dotColor, flexShrink: 0, display: 'inline-block' }} />
+                    <span style={{ fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+                    <span style={{ fontSize: '12px', fontWeight: 500, marginLeft: 4, opacity: 0.7 }}>({categoryEstimates.length})</span>
+                  </div>
+                  <div className="space-y-3 pl-3">
+                    {categoryEstimates.map((estimate) => {
+                      const isExpanded = expandedEstimateIds.has(estimate.id);
+                      const { itemsByGroup, groupKeys } = groupEstimateItems(estimate.items || []);
+                      const groupCount = groupKeys.length;
+                      return (
                   <div key={estimate.id} className="border border-gray-200 rounded-lg overflow-hidden bg-white">
                     {/* Estimate Header */}
                     <div className="px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors flex items-center justify-between">
@@ -461,9 +490,12 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
