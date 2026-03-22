@@ -190,7 +190,6 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
             item.fish_name === line.fish_name &&
             item.cut_name === line.cut_name &&
             item.grade_name === line.grade_name &&
-            (item.fish_size || null) === (line.fish_size || null) &&
             item.port_code === line.port_code
         );
         if (match) {
