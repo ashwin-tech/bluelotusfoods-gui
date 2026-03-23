@@ -182,6 +182,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     const initialWeights: OrderWeights = {};
     vendorGroups.forEach(group => {
       const po = sentPOs[group.vendor_id];
+      console.log(`[PODialog] prepopulate vendor=${group.vendor_name} po_items=${po?.items?.length ?? 'none'}`);
       if (!po?.items?.length) return;
       const poLines = buildPOLines(group);
       poLines.forEach((line, idx) => {
@@ -192,6 +193,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
             item.grade_name === line.grade_name &&
             item.port_code === line.port_code
         );
+        console.log(`[PODialog] line ${idx}: ${line.fish_name}/${line.cut_name}/${line.port_code} → match=${!!match} weight=${match?.order_weight_lbs ?? '-'}`);
         if (match) {
           initialWeights[`${group.vendor_id}-${idx}`] = String(match.order_weight_lbs);
         }
@@ -280,6 +282,11 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
           };
         }
         setSentPOs(existing);
+        console.log('[PODialog] sentPOs loaded:', JSON.stringify(
+          Object.entries(existing).map(([vid, po]) => ({
+            vendor_id: vid, po_number: po.po_number, item_count: po.items.length, items: po.items
+          }))
+        ));
 
         // Fetch timelines for all found POs in parallel
         const poList = Object.values(existing);
