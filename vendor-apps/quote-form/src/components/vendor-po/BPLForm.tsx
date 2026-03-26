@@ -29,7 +29,11 @@ interface BoxEntry {
   key: string;
   po_item_id: number;
   box_number: number;
-  pieces: Piece[];
+  weightMode: 'individual' | 'range';
+  pieces: Piece[];        // individual mode only
+  rangeFromKg: string;   // range mode: From (kg)
+  rangeToKg: string;     // range mode: To (kg)
+  netWeightKg: string;   // range mode: total box net weight (kg)
 }
 
 interface ExistingBPL {
@@ -49,6 +53,8 @@ interface ExistingBPL {
     num_pieces: number;
     net_weight_kg: number;
     gross_weight_kg: number;
+    weight_range_from_kg: number | null;
+    weight_range_to_kg: number | null;
     fish_name: string;
     cut_name: string;
     grade_name: string;
@@ -185,8 +191,21 @@ const makePiece = (num: number): Piece => ({
   weight_kg: '',
 });
 
-const calcBoxTotal = (pieces: Piece[]): number =>
-  pieces.reduce((s, p) => s + (parseFloat(p.weight_kg) || 0), 0);
+const makeBoxEntry = (poItemId: number, boxNumber: number, keyPrefix: string): BoxEntry => ({
+  key: `${keyPrefix}-${poItemId}-${Date.now()}`,
+  po_item_id: poItemId,
+  box_number: boxNumber,
+  weightMode: 'individual',
+  pieces: [makePiece(1)],
+  rangeFromKg: '',
+  rangeToKg: '',
+  netWeightKg: '',
+});
+
+const calcBoxTotal = (box: BoxEntry): number =>
+  box.weightMode === 'range'
+    ? parseFloat(box.netWeightKg) || 0
+    : box.pieces.reduce((s, p) => s + (parseFloat(p.weight_kg) || 0), 0);
 
 
 /* ─── Component ─────────────────────────────────── */
@@ -226,24 +245,35 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
       setAirWayBill(existingBPL.air_way_bill || '');
       setPackedDate(existingBPL.packed_date || '');
       setExpiryDate(existingBPL.expiry_date || '');
-      entries = existingBPL.boxes.map((b, i) => ({
-        key: `existing-${i}`,
-        po_item_id: b.po_item_id,
-        box_number: b.box_number,
-        pieces: b.pieces && b.pieces.length > 0
-          ? b.pieces.map((p, j) => ({
-              key: `existing-pc-${i}-${j}`,
-              piece_number: p.piece_number,
-              weight_kg: String(p.weight_kg),
-            }))
-          : [makePiece(1)],
-      }));
+      entries = existingBPL.boxes.map((b, i) => {
+        const isRange = b.weight_range_from_kg != null;
+        return {
+          key: `existing-${i}`,
+          po_item_id: b.po_item_id,
+          box_number: b.box_number,
+          weightMode: isRange ? 'range' : 'individual',
+          rangeFromKg: isRange ? String(b.weight_range_from_kg) : '',
+          rangeToKg: isRange ? String(b.weight_range_to_kg) : '',
+          netWeightKg: isRange ? String(b.net_weight_kg) : '',
+          pieces: !isRange && b.pieces && b.pieces.length > 0
+            ? b.pieces.map((p, j) => ({
+                key: `existing-pc-${i}-${j}`,
+                piece_number: p.piece_number,
+                weight_kg: String(p.weight_kg),
+              }))
+            : [makePiece(1)],
+        };
+      });
     } else {
       entries = selectedItems.map((item, i) => ({
         key: `new-${item.id}-${i}`,
         po_item_id: item.id,
         box_number: i + 1,
+        weightMode: 'individual',
         pieces: [makePiece(1)],
+        rangeFromKg: '',
+        rangeToKg: '',
+        netWeightKg: '',
       }));
     }
     setBoxEntries(entries);
@@ -292,15 +322,51 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
     setBoxEntries(prev => prev.map(b => b.key !== boxKey ? b : { ...b, box_number: value }));
   };
 
+  const setWeightMode = (boxKey: string, mode: 'individual' | 'range') => {
+    setBoxEntries(prev => prev.map(b =>
+      b.key !== boxKey ? b : { ...b, weightMode: mode }
+    ));
+  };
+
+  const setItemWeightMode = (poItemId: number, mode: 'individual' | 'range') => {
+    setBoxEntries(prev => prev.map(b =>
+      b.po_item_id !== poItemId ? b : { ...b, weightMode: mode }
+    ));
+  };
+
+  const updateRangeFrom = (boxKey: string, value: string) => {
+    setBoxEntries(prev => prev.map(b =>
+      b.key !== boxKey ? b : { ...b, rangeFromKg: value }
+    ));
+  };
+
+  const updateRangeTo = (boxKey: string, value: string) => {
+    setBoxEntries(prev => prev.map(b =>
+      b.key !== boxKey ? b : { ...b, rangeToKg: value }
+    ));
+  };
+
+  const updateNetWeight = (boxKey: string, value: string) => {
+    setBoxEntries(prev => prev.map(b =>
+      b.key !== boxKey ? b : { ...b, netWeightKg: value }
+    ));
+  };
+
   const addBox = (poItemId: number) => {
     const existing = boxEntries.filter(b => b.po_item_id === poItemId);
     const maxBox = existing.reduce((m, b) => Math.max(m, b.box_number), 0);
+    // New box inherits the weight mode of the last box for this item
+    const lastMode = existing.length > 0 ? existing[existing.length - 1].weightMode : 'individual';
     const newKey = `add-${poItemId}-${Date.now()}`;
     setBoxEntries(prev => [...prev, {
       key: newKey,
       po_item_id: poItemId,
       box_number: maxBox + 1,
+      weightMode: lastMode,
       pieces: [makePiece(1)],
+      rangeFromKg: '',
+      rangeToKg: '',
+      netWeightKg: '',
     }]);
     setPiecesInput(prev => ({ ...prev, [newKey]: '1' }));
   };
@@ -309,14 +375,45 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
     setBoxEntries(prev => prev.filter(b => b.key !== boxKey));
   };
 
+  const cloneBox = (boxKey: string) => {
+    const newKey = `clone-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setBoxEntries(prev => {
+      const idx = prev.findIndex(b => b.key === boxKey);
+      if (idx === -1) return prev;
+      const src = prev[idx];
+      const clone: BoxEntry = {
+        ...src,
+        key: newKey,
+        box_number: src.box_number + 1,
+        pieces: src.pieces.map((p, i) => ({ ...makePiece(i + 1), weight_kg: p.weight_kg })),
+      };
+      const next = [...prev];
+      next.splice(idx + 1, 0, clone);
+      return next;
+    });
+    setPiecesInput(prev => {
+      const src = boxEntries.find(b => b.key === boxKey);
+      return src ? { ...prev, [newKey]: String(src.pieces.length) } : prev;
+    });
+  };
+
   /* ── validate ── */
   const validate = (): string | null => {
     if (boxEntries.length === 0) return 'Add at least one box entry';
     for (const box of boxEntries) {
-      if (box.pieces.length === 0) return `Box #${box.box_number}: Must have at least 1 piece`;
-      for (let i = 0; i < box.pieces.length; i++) {
-        const w = parseFloat(box.pieces[i].weight_kg);
-        if (isNaN(w) || w <= 0) return `Box #${box.box_number}, Pc ${i + 1}: Weight must be > 0`;
+      if (box.weightMode === 'range') {
+        const f = parseFloat(box.rangeFromKg);
+        const t = parseFloat(box.rangeToKg);
+        const n = parseFloat(box.netWeightKg);
+        if (isNaN(f) || f <= 0) return `Box #${box.box_number}: Range "From" must be > 0`;
+        if (isNaN(t) || t <= f) return `Box #${box.box_number}: Range "To" must be greater than "From"`;
+        if (isNaN(n) || n <= 0) return `Box #${box.box_number}: Net weight must be > 0`;
+      } else {
+        if (box.pieces.length === 0) return `Box #${box.box_number}: Must have at least 1 piece`;
+        for (let i = 0; i < box.pieces.length; i++) {
+          const w = parseFloat(box.pieces[i].weight_kg);
+          if (isNaN(w) || w <= 0) return `Box #${box.box_number}, Pc ${i + 1}: Weight must be > 0`;
+        }
       }
     }
     return null;
@@ -348,11 +445,18 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
           boxes: boxEntries.map(box => ({
             po_item_id: box.po_item_id,
             box_number: box.box_number,
-            num_pieces: box.pieces.length,
-            pieces: box.pieces.map((p, idx) => ({
-              piece_number: idx + 1,
-              weight_kg: parseFloat(p.weight_kg),
-            })),
+            num_pieces: box.weightMode === 'range'
+              ? parseInt(piecesInput[box.key] || '0', 10)
+              : box.pieces.length,
+            weight_range_from_kg: box.weightMode === 'range' ? parseFloat(box.rangeFromKg) : null,
+            weight_range_to_kg: box.weightMode === 'range' ? parseFloat(box.rangeToKg) : null,
+            net_weight_kg: box.weightMode === 'range' ? parseFloat(box.netWeightKg) : null,
+            pieces: box.weightMode === 'individual'
+              ? box.pieces.map((p, idx) => ({
+                  piece_number: idx + 1,
+                  weight_kg: parseFloat(p.weight_kg),
+                }))
+              : [],
           })),
         }),
       });
@@ -634,22 +738,45 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
 
           {selectedItems.map(item => {
             const boxes = groupedByItem.get(item.id) || [];
-            const itemTotal = boxes.reduce((s, b) => s + calcBoxTotal(b.pieces), 0);
+            const itemTotal = boxes.reduce((s, b) => s + calcBoxTotal(b), 0);
 
             return (
               <div key={item.id} style={{ marginBottom: '16px', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
                 {/* Item sub-header */}
                 <div style={{
                   padding: '8px 12px', backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0',
-                  display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '4px',
+                  display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '6px',
                 }}>
                   <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
                     {item.fish_name} · {item.cut_name} · {item.grade_name}
                     {item.fish_size && <span style={{ color: '#6b7280' }}> · {item.fish_size}</span>}
                   </span>
-                  <span style={{ fontSize: '12px', color: itemTotal > 0 ? '#059669' : '#9ca3af' }}>
-                    Packed: {itemTotal.toFixed(1)} / {Number(item.order_weight_kg).toLocaleString()} kg
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {/* Weight mode toggle — applies to all boxes for this item */}
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                      {(['individual', 'range'] as const).map(m => {
+                        const active = (boxes[0]?.weightMode ?? 'individual') === m;
+                        return (
+                          <button
+                            key={m}
+                            onClick={() => setItemWeightMode(item.id, m)}
+                            style={{
+                              padding: '2px 8px', fontSize: '11px', fontWeight: 600,
+                              borderRadius: '4px', cursor: 'pointer', border: '1px solid',
+                              borderColor: active ? '#0A3D5C' : '#cbd5e1',
+                              backgroundColor: active ? '#0A3D5C' : '#fff',
+                              color: active ? '#fff' : '#64748b',
+                            }}
+                          >
+                            {m === 'individual' ? 'Individual' : 'By Range'}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span style={{ fontSize: '12px', color: itemTotal > 0 ? '#059669' : '#9ca3af' }}>
+                      Packed: {itemTotal.toFixed(1)} / {Number(item.order_weight_kg).toLocaleString()} kg
+                    </span>
+                  </div>
                 </div>
 
                 {/* Boxes table */}
@@ -659,14 +786,14 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                     <tr>
                       <th style={{ ...S.thCenter, width: '60px' }}>Box #</th>
                       <th style={{ ...S.thCenter, width: '70px' }}># Pieces</th>
-                      <th style={S.th}>Individual Wt (KG)</th>
+                      <th style={S.th}>Weight Detail (KG)</th>
                       <th style={{ ...S.thRight, width: '100px' }}>Total Wt (KG)</th>
                       <th style={{ ...S.thCenter, width: '44px' }}></th>
                     </tr>
                   </thead>
                   <tbody>
                     {boxes.map(box => {
-                      const boxTotal = calcBoxTotal(box.pieces);
+                      const boxTotal = calcBoxTotal(box);
                       return (
                         <tr key={box.key}>
                           {/* Box # */}
@@ -697,42 +824,84 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                               onChange={e => {
                                 const v = e.target.value.replace(/[^0-9]/g, '');
                                 setPiecesInput(prev => ({ ...prev, [box.key]: v }));
-                                if (v !== '') setNumPieces(box.key, parseInt(v));
+                                if (box.weightMode === 'individual' && v !== '') setNumPieces(box.key, parseInt(v));
                               }}
                               onBlur={() => {
-                                const v = piecesInput[box.key];
-                                if (!v || parseInt(v) < 1) {
-                                  setNumPieces(box.key, 1);
-                                  setPiecesInput(prev => ({ ...prev, [box.key]: '1' }));
+                                if (box.weightMode === 'individual') {
+                                  const v = piecesInput[box.key];
+                                  if (!v || parseInt(v) < 1) {
+                                    setNumPieces(box.key, 1);
+                                    setPiecesInput(prev => ({ ...prev, [box.key]: '1' }));
+                                  }
                                 }
                               }}
                               style={{ ...S.inputSmall, textAlign: 'center' }}
                             />
                           </td>
 
-                          {/* Individual piece weights */}
+                          {/* Weight detail */}
                           <td style={S.td}>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                              {box.pieces.map((pc, idx) => (
-                                <div key={pc.key} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  <span style={{ fontSize: '11px', color: '#6b7280', minWidth: '28px' }}>
-                                    Pc{idx + 1}:
-                                  </span>
+                            {box.weightMode === 'individual' ? (
+                              /* Individual piece weights */
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                                {box.pieces.map((pc, idx) => (
+                                  <div key={pc.key} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                    <span style={{ fontSize: '11px', color: '#6b7280', minWidth: '28px' }}>
+                                      Pc{idx + 1}:
+                                    </span>
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      pattern="[0-9]*\.?[0-9]*"
+                                      value={pc.weight_kg}
+                                      onChange={e => {
+                                        const v = e.target.value.replace(/[^0-9.]/g, '');
+                                        updatePieceWeight(box.key, pc.key, v);
+                                      }}
+                                      style={S.input}
+                                      placeholder="0.00"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              /* Range inputs: From / To / Net Wt */
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span style={{ fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap' }}>From:</span>
                                   <input
                                     type="text"
                                     inputMode="decimal"
-                                    pattern="[0-9]*\.?[0-9]*"
-                                    value={pc.weight_kg}
-                                    onChange={e => {
-                                      const v = e.target.value.replace(/[^0-9.]/g, '');
-                                      updatePieceWeight(box.key, pc.key, v);
-                                    }}
-                                    style={S.input}
+                                    value={box.rangeFromKg}
+                                    onChange={e => updateRangeFrom(box.key, e.target.value.replace(/[^0-9.]/g, ''))}
+                                    style={{ ...S.input, width: '68px' }}
                                     placeholder="0.00"
                                   />
                                 </div>
-                              ))}
-                            </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span style={{ fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap' }}>To:</span>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={box.rangeToKg}
+                                    onChange={e => updateRangeTo(box.key, e.target.value.replace(/[^0-9.]/g, ''))}
+                                    style={{ ...S.input, width: '68px' }}
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span style={{ fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap' }}>Net Wt:</span>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={box.netWeightKg}
+                                    onChange={e => updateNetWeight(box.key, e.target.value.replace(/[^0-9.]/g, ''))}
+                                    style={{ ...S.input, width: '68px' }}
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                              </div>
+                            )}
                           </td>
 
                           {/* Total weight */}
@@ -740,11 +909,22 @@ const BPLForm: React.FC<BPLFormProps> = ({ poId, portCode, selectedItems, existi
                             {boxTotal > 0 ? boxTotal.toFixed(1) : '-'}
                           </td>
 
-                          {/* Remove */}
-                          <td style={S.tdCenter}>
-                            {boxes.length > 1 && (
-                              <button onClick={() => removeBox(box.key)} style={S.btnDanger} title="Remove box">×</button>
-                            )}
+                          {/* Clone / Remove */}
+                          <td style={{ ...S.tdCenter, whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                              <button onClick={() => cloneBox(box.key)} title="Clone row" style={{
+                                padding: '4px 7px', backgroundColor: '#eff6ff', color: '#2563eb',
+                                border: '1px solid #bfdbfe', borderRadius: '4px', fontSize: '11px',
+                                cursor: 'pointer', lineHeight: '1',
+                              }}>⧉</button>
+                              {boxes.length > 1 && (
+                                <button onClick={() => removeBox(box.key)} style={{
+                                  padding: '4px 7px', backgroundColor: '#fee2e2', color: '#dc2626',
+                                  border: '1px solid #fecaca', borderRadius: '4px', fontSize: '11px',
+                                  cursor: 'pointer', lineHeight: '1',
+                                }} title="Remove box">×</button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
