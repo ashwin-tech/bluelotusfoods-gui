@@ -53,6 +53,8 @@ interface ExistingBPL {
     num_pieces: number;
     net_weight_kg: number;
     gross_weight_kg: number;
+    weight_range_from_kg: number | null;
+    weight_range_to_kg: number | null;
     fish_name: string;
     cut_name: string;
     grade_name: string;
