@@ -370,10 +370,13 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       // Key products by fish+cut+grade+size (lowercase for safe matching)
       // Also store a size-less fallback key so items with no size still match
       quote.products.forEach((p) => {
-        const sizeKey = `${p.fish_type.toLowerCase()}|${p.cut_name.toLowerCase()}|${p.grade_name.toLowerCase()}|${String(p.weight_range ?? '').toLowerCase()}`;
-        productLookup[sizeKey] = p;
+        const ft = (p.fish_type || '').toLowerCase();
+        const cn = (p.cut_name || '').toLowerCase();
+        const gn = (p.grade_name || '').toLowerCase();
+        const wr = String(p.weight_range ?? '').toLowerCase();
+        productLookup[`${ft}|${cn}|${gn}|${wr}`] = p;
         // Only write the no-size fallback if not already set (first product wins)
-        const noSizeKey = `${p.fish_type.toLowerCase()}|${p.cut_name.toLowerCase()}|${p.grade_name.toLowerCase()}|`;
+        const noSizeKey = `${ft}|${cn}|${gn}|`;
         if (!productLookup[noSizeKey]) productLookup[noSizeKey] = p;
       });
     }
@@ -388,8 +391,11 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       seen.add(dedupeKey);
 
       // Match to vendor quote product — try with size first, fall back to no-size
-      const sizeMatchKey = `${item.common_name.toLowerCase()}|${item.cut_name.toLowerCase()}|${item.grade_name.toLowerCase()}|${String(item.fish_size ?? '').toLowerCase()}`;
-      const noSizeMatchKey = `${item.common_name.toLowerCase()}|${item.cut_name.toLowerCase()}|${item.grade_name.toLowerCase()}|`;
+      const ft = (item.common_name || '').toLowerCase();
+      const cn = (item.cut_name || '').toLowerCase();
+      const gn = (item.grade_name || '').toLowerCase();
+      const sizeMatchKey = `${ft}|${cn}|${gn}|${String(item.fish_size ?? '').toLowerCase()}`;
+      const noSizeMatchKey = `${ft}|${cn}|${gn}|`;
       const matchedProduct = productLookup[sizeMatchKey] || productLookup[noSizeMatchKey] || null;
 
       // Match to vendor quote destination
