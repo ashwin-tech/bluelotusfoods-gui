@@ -378,7 +378,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     const lines: POLine[] = [];
 
     group.estimateItems.forEach((item) => {
-      const dedupeKey = `${item.common_name}|${item.cut_name}|${item.grade_name}|${item.port_code}`;
+      const dedupeKey = `${item.common_name}|${item.cut_name}|${item.grade_name}|${item.fish_size ?? ''}|${item.port_code}`;
       if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
 
