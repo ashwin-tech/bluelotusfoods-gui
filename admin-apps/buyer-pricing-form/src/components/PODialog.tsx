@@ -366,14 +366,18 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       quote.destinations.forEach((d) => {
         destByCode[d.destination_code] = d;
       });
-      // Key products by fish+cut+grade (lowercase for safe matching)
+      // Key products by fish+cut+grade+size (lowercase for safe matching)
+      // Also store a size-less fallback key so items with no size still match
       quote.products.forEach((p) => {
-        const key = `${p.fish_type.toLowerCase()}|${p.cut_name.toLowerCase()}|${p.grade_name.toLowerCase()}`;
-        productLookup[key] = p;
+        const sizeKey = `${p.fish_type.toLowerCase()}|${p.cut_name.toLowerCase()}|${p.grade_name.toLowerCase()}|${String(p.weight_range ?? '').toLowerCase()}`;
+        productLookup[sizeKey] = p;
+        // Only write the no-size fallback if not already set (first product wins)
+        const noSizeKey = `${p.fish_type.toLowerCase()}|${p.cut_name.toLowerCase()}|${p.grade_name.toLowerCase()}|`;
+        if (!productLookup[noSizeKey]) productLookup[noSizeKey] = p;
       });
     }
 
-    // Deduplicate estimate items by fish+cut+grade+port (collapse the 3 clearing tiers)
+    // Deduplicate estimate items by fish+cut+grade+size+port (collapse the 3 clearing tiers)
     const seen = new Set<string>();
     const lines: POLine[] = [];
 
@@ -382,9 +386,10 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
 
-      // Match to vendor quote product
-      const matchKey = `${item.common_name.toLowerCase()}|${item.cut_name.toLowerCase()}|${item.grade_name.toLowerCase()}`;
-      const matchedProduct = productLookup[matchKey] || null;
+      // Match to vendor quote product — try with size first, fall back to no-size
+      const sizeMatchKey = `${item.common_name.toLowerCase()}|${item.cut_name.toLowerCase()}|${item.grade_name.toLowerCase()}|${String(item.fish_size ?? '').toLowerCase()}`;
+      const noSizeMatchKey = `${item.common_name.toLowerCase()}|${item.cut_name.toLowerCase()}|${item.grade_name.toLowerCase()}|`;
+      const matchedProduct = productLookup[sizeMatchKey] || productLookup[noSizeMatchKey] || null;
 
       // Match to vendor quote destination
       const dest = destByCode[item.port_code] || null;
