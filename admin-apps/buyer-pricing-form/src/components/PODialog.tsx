@@ -191,6 +191,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
             item.fish_name === line.fish_name &&
             item.cut_name === line.cut_name &&
             item.grade_name === line.grade_name &&
+            item.fish_size === line.fish_size &&
             item.port_code === line.port_code
         );
         console.log(`[PODialog] line ${idx}: ${line.fish_name}/${line.cut_name}/${line.port_code} → match=${!!match} weight=${match?.order_weight_lbs ?? '-'}`);
