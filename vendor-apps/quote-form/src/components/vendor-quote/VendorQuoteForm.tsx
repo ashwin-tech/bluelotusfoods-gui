@@ -8,6 +8,8 @@ interface FishSize {
   id: number;
   fish_species_id: number;
   species_name: string;
+  cut_id: number | null;
+  cut_name: string | null;
   kg_label: number;
   kg_max: number | null;
   lbs_label: number;
