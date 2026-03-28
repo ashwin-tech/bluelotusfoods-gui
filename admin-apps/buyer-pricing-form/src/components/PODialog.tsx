@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { kgToLbs, lbsToKg } from '../utils/units';
 
 interface EstimateItem {
   vendor_id: number;
@@ -9,6 +10,7 @@ interface EstimateItem {
   cut_name: string;
   grade_name: string;
   fish_size?: string;
+  fish_size_id?: number;
   port_code: string;
   offer_quantity: number;
   fish_price: number;
@@ -34,6 +36,9 @@ interface QuoteProduct {
   cut_name: string;
   grade_name: string;
   weight_range: number | null;
+  fish_size_id?: number;
+  lbs_label?: number;
+  lbs_max?: number;
   price_per_kg: number;
   quantity: number;
 }
@@ -373,9 +378,19 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         const ft = (p.fish_type || '').toLowerCase();
         const cn = (p.cut_name || '').toLowerCase();
         const gn = (p.grade_name || '').toLowerCase();
-        const wr = String(p.weight_range ?? '').toLowerCase();
-        productLookup[`${ft}|${cn}|${gn}|${wr}`] = p;
-        // Only write the no-size fallback if not already set (first product wins)
+
+        // Primary: exact fish_size_id match (new quotes)
+        if (p.fish_size_id != null) {
+          productLookup[`${ft}|${cn}|${gn}|size:${p.fish_size_id}`] = p;
+        }
+        // Fallback: raw kg weight_range for old quotes without fish_size_id
+        if (p.weight_range != null) {
+          productLookup[`${ft}|${cn}|${gn}|${p.weight_range}`] = p;
+          // Also key by lbs equivalent so it matches item.fish_size (stored in lbs)
+          const lbsKey = String(Math.round(kgToLbs(p.weight_range) * 10) / 10);
+          productLookup[`${ft}|${cn}|${gn}|${lbsKey}`] = p;
+        }
+        // No-size fallback (first product wins)
         const noSizeKey = `${ft}|${cn}|${gn}|`;
         if (!productLookup[noSizeKey]) productLookup[noSizeKey] = p;
       });
@@ -390,22 +405,38 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
 
-      // Match to vendor quote product — try with size first, fall back to no-size
+      // Match to vendor quote product — try fish_size_id first, then size text, then no-size fallback
       const ft = (item.common_name || '').toLowerCase();
       const cn = (item.cut_name || '').toLowerCase();
       const gn = (item.grade_name || '').toLowerCase();
+      const classKey = item.fish_size_id != null ? `${ft}|${cn}|${gn}|size:${item.fish_size_id}` : null;
       const sizeMatchKey = `${ft}|${cn}|${gn}|${String(item.fish_size ?? '').toLowerCase()}`;
       const noSizeMatchKey = `${ft}|${cn}|${gn}|`;
-      const matchedProduct = productLookup[sizeMatchKey] || productLookup[noSizeMatchKey] || null;
+      const matchedProduct =
+        (classKey && productLookup[classKey]) ||
+        productLookup[sizeMatchKey] ||
+        productLookup[noSizeMatchKey] ||
+        null;
 
       // Match to vendor quote destination
       const dest = destByCode[item.port_code] || null;
+
+      // Prefer lbs_label from matched vendor quote product (authoritative market size);
+      // fall back to item.fish_size (estimate-stored lbs string) or raw kg weight_range
+      const sizeLabel = (() => {
+        if (matchedProduct?.lbs_label != null) {
+          return matchedProduct.lbs_max != null
+            ? `${matchedProduct.lbs_label}–${matchedProduct.lbs_max}`
+            : String(matchedProduct.lbs_label);
+        }
+        return item.fish_size || (matchedProduct?.weight_range != null ? String(matchedProduct.weight_range) : '');
+      })();
 
       lines.push({
         fish_name: item.common_name,
         cut_name: item.cut_name,
         grade_name: item.grade_name,
-        fish_size: item.fish_size || (matchedProduct?.weight_range != null ? String(matchedProduct.weight_range) : ''),
+        fish_size: sizeLabel,
         port_code: item.port_code,
         destination_name: dest ? dest.destination : item.port_code,
         price_per_kg: matchedProduct ? Number(matchedProduct.price_per_kg) : 0,
@@ -429,7 +460,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     const linesWithWeights = poLines.map((line, idx) => {
       const key = getWeightKey(group.vendor_id, idx);
       const lbs = parseFloat(orderWeights[key] || '0');
-      const kg = Math.round((lbs / 2.20462) / 100) * 100;
+      const kg = Math.round(lbsToKg(lbs) / 100) * 100;
       return {
         fish_name: line.fish_name,
         cut_name: line.cut_name,
@@ -513,7 +544,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         .map((line, idx) => {
           const key = getWeightKey(group.vendor_id, idx);
           const lbs = parseFloat(orderWeights[key] || '0');
-          const kg = Math.round((lbs / 2.20462) / 100) * 100;
+          const kg = Math.round(lbsToKg(lbs) / 100) * 100;
           return { fish_name: line.fish_name, cut_name: line.cut_name, grade_name: line.grade_name,
                    fish_size: line.fish_size || null, port_code: line.port_code, destination_name: line.destination_name,
                    price_per_kg: line.price_per_kg, airfreight_per_kg: line.airfreight_per_kg,
@@ -859,7 +890,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                 {poLines.map((line, idx) => {
                                   const key = getWeightKey(group.vendor_id, idx);
                                   const orderLbs = parseFloat(orderWeights[key] || '0') || 0;
-                                  const orderKg = orderLbs / 2.20462;
+                                  const orderKg = lbsToKg(orderLbs);
                                   const totalPerKg = line.price_per_kg + line.airfreight_per_kg;
                                   const prevPort = idx > 0 ? poLines[idx - 1].port_code : null;
                                   const showPortHeader = line.port_code !== prevPort;
