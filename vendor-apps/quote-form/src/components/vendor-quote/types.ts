@@ -14,6 +14,7 @@ export interface Size {
   cut: string;
   grade: string;
   weightRange: string;
+  fishSizeId: number | null;
   pricePerKg: string;
   quantity: string;
   selected: boolean;

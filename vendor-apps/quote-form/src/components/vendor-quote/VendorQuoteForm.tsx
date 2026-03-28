@@ -4,6 +4,17 @@ import VendorQuoteFormView from './VendorQuoteFormView';
 import { postVendorForm } from '../../common/PostVendorForm'; // Import the new utility
 import { sendQuoteEmail } from '../../common/SendQuoteEmail'; // Import email utility
 
+interface FishSize {
+  id: number;
+  fish_species_id: number;
+  species_name: string;
+  kg_label: number;
+  kg_max: number | null;
+  lbs_label: number;
+  lbs_max: number | null;
+  sort_order: number;
+}
+
 interface Props {
   initialVendorName?: string;
   initialCountry?: string;
@@ -18,15 +29,25 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
     fishType: '',
     countryOfOrigin: '',
     destinations: [{ id: cryptoRandomId(), destination: '', airfreightPerKg: '', arrivalDate: '', minWeight: '', maxWeight: '', selected: false }],
-    sizes: [{ id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', pricePerKg: '', quantity: '', selected: false }],
+    sizes: [{ id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', fishSizeId: null, pricePerKg: '', quantity: '', selected: false }],
     notes: '',
     priceNegotiable: false,
     exclusiveOffer: false,
   });
 
+  const [allFishSizes, setAllFishSizes] = useState<FishSize[]>([]);
+
   // Add loading and error states
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const baseUrl = import.meta.env.VITE_API_BASE_URL;
+    fetch(`${baseUrl}/dictionary/fish-sizes`)
+      .then(r => r.json())
+      .then(data => setAllFishSizes(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (initialVendorName || initialCountry) {
@@ -101,6 +122,18 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
     setFormData((prev) => {
       const updated = [...prev.sizes];
       updated[index] = { ...updated[index], [name]: value };
+      // When fish type changes, reset the selected fish size
+      if (name === 'fishType') {
+        updated[index] = { ...updated[index], fishSizeId: null, weightRange: '' };
+      }
+      return { ...prev, sizes: updated };
+    });
+  };
+
+  const handleFishSizeSelect = (index: number, sizeId: number, kgLabel: string) => {
+    setFormData((prev) => {
+      const updated = [...prev.sizes];
+      updated[index] = { ...updated[index], fishSizeId: sizeId, weightRange: String(kgLabel) };
       return { ...prev, sizes: updated };
     });
   };
@@ -116,14 +149,14 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
   const addSize = () => {
     setFormData((prev) => ({
       ...prev,
-      sizes: [...prev.sizes, { id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', pricePerKg: '', quantity: '', selected: false }],
+      sizes: [...prev.sizes, { id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', fishSizeId: null, pricePerKg: '', quantity: '', selected: false }],
     }));
   };
 
   const deleteSelectedSizes = () => {
     setFormData((prev) => {
       const kept = prev.sizes.filter((s) => !s.selected);
-      return { ...prev, sizes: kept.length > 0 ? kept : [{ id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', pricePerKg: '', quantity: '', selected: false }] };
+      return { ...prev, sizes: kept.length > 0 ? kept : [{ id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', fishSizeId: null, pricePerKg: '', quantity: '', selected: false }] };
     });
   };
 
@@ -134,7 +167,7 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
       fishType: '',
       countryOfOrigin: initialCountry, // Keep initial country if provided
       destinations: [{ id: cryptoRandomId(), destination: '', airfreightPerKg: '', arrivalDate: '', minWeight: '', maxWeight: '', selected: false }],
-      sizes: [{ id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', pricePerKg: '', quantity: '', selected: false }],
+      sizes: [{ id: cryptoRandomId(), fishType: '', cut: '', grade: '', weightRange: '', fishSizeId: null, pricePerKg: '', quantity: '', selected: false }],
       notes: '',
       priceNegotiable: false,
       exclusiveOffer: false,
@@ -223,6 +256,7 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
           grade_name: size.grade,
           price_per_kg: parseFloat(size.pricePerKg.replace(/[^0-9.]/g, '') || "0"), // Remove $ and parse
           quantity: parseInt(size.quantity || "0", 10),
+          fish_size_id: size.fishSizeId ?? null,
         })),
       };
       console.log("Payload is ", payload);
@@ -274,7 +308,8 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
   return (
     <VendorQuoteFormView
       formData={formData}
-      nextQuoteId={nextQuoteId ?? null} 
+      allFishSizes={allFishSizes}
+      nextQuoteId={nextQuoteId ?? null}
       isSubmitting={isSubmitting}
       submitError={submitError}
       hasMultipleDestinations={formData.destinations.length > 1}
@@ -282,6 +317,7 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
       handleChange={handleChange}
       handleDestinationChange={handleDestinationChange}
       handleSizeChange={handleSizeChange}
+      handleFishSizeSelect={handleFishSizeSelect}
       toggleDestinationSelected={toggleDestinationSelected}
       toggleSizeSelected={toggleSizeSelected}
       addDestination={addDestination}

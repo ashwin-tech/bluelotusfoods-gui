@@ -51,6 +51,7 @@ interface Estimate {
   grade_id: number;
   grade: string;
   fish_size?: string;  // Weight range from vendor quote (optional, editable)
+  fish_size_id?: number;  // FK to fish_size table
   offer_quantity: number;  // Weight in LBS
   fish_price: number;
   freight_price: number;
@@ -580,6 +581,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                   cut_id: estimate.cut_id || 1,
                   grade_id: estimate.grade_id || 1,
                   fish_size: estimate.fish_size || null,
+                  fish_size_id: estimate.fish_size_id ?? null,
                   fish_price: estimate.fish_price,
                   freight_price: estimate.freight_price,
                   tariff_percent: estimate.tariff_percent,

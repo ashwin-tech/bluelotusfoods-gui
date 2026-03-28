@@ -1,5 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { FormData } from './types';
+
+interface FishSize {
+  id: number;
+  fish_species_id: number;
+  species_name: string;
+  cut_id: number | null;
+  cut_name: string | null;
+  kg_label: number;
+  kg_max: number | null;
+  lbs_label: number;
+  lbs_max: number | null;
+}
 import DictionaryDropdown from '../../common/DictionaryDropdown';
 import FishDropdown from '../../common/FishDropDown';
 import CutDropdown from '../../common/CutDropdown'; // Import CutDropdown
@@ -7,6 +19,7 @@ import GradeDropdown from '../../common/GradeDropdown'; // Import GradeDropdown
 
 interface Props {
   formData: FormData;
+  allFishSizes: FishSize[];
   nextQuoteId: number | null; // Add nextQuoteId as a prop
   isSubmitting: boolean; // Add loading state
   submitError: string | null; // Add error state
@@ -15,6 +28,7 @@ interface Props {
   handleChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   handleDestinationChange: (index: number, e: React.ChangeEvent<HTMLInputElement>) => void;
   handleSizeChange: (index: number, e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleFishSizeSelect: (index: number, sizeId: number, kgLabel: string) => void;
   toggleDestinationSelected: (index: number) => void;
   toggleSizeSelected: (index: number) => void;
   addDestination: () => void;
@@ -31,6 +45,7 @@ interface Props {
 const VendorQuoteFormView: React.FC<Props> = (props) => {
   const {
     formData,
+    allFishSizes,
     nextQuoteId, // Destructure nextQuoteId
     isSubmitting,
     submitError,
@@ -39,6 +54,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
     handleChange,
     handleDestinationChange,
     handleSizeChange,
+    handleFishSizeSelect,
     toggleDestinationSelected,
     toggleSizeSelected,
     addDestination,
@@ -304,13 +320,43 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                 }
               />
 
-              <input
-                name="weightRange"
-                value={size.weightRange}
-                onChange={(e) => handleSizeChange(idx, e)}
-                required
-                className="form-input border-red-300 focus:ring-red-400"
-              />
+              {(() => {
+                const sizesForSpecies = allFishSizes.filter(fs =>
+                  fs.species_name === (size as any).fishType &&
+                  (fs.cut_name == null || fs.cut_name === size.cut)
+                );
+                if (sizesForSpecies.length > 0) {
+                  return (
+                    <select
+                      value={size.fishSizeId ?? ''}
+                      onChange={(e) => {
+                        const selected = sizesForSpecies.find(fs => fs.id === Number(e.target.value));
+                        if (selected) handleFishSizeSelect(idx, selected.id, String(selected.kg_label));
+                      }}
+                      required
+                      className="form-input border-red-300 focus:ring-red-400"
+                    >
+                      <option value="">-- Select --</option>
+                      {sizesForSpecies.map(fs => (
+                        <option key={fs.id} value={fs.id}>
+                          {fs.kg_max
+                              ? `${parseFloat(String(fs.kg_label))}–${parseFloat(String(fs.kg_max))} kg`
+                              : `${parseFloat(String(fs.kg_label))} kg`}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                }
+                return (
+                  <input
+                    name="weightRange"
+                    value={size.weightRange}
+                    onChange={(e) => handleSizeChange(idx, e)}
+                    required
+                    className="form-input border-red-300 focus:ring-red-400"
+                  />
+                );
+              })()}
               <input
                 name="pricePerKg"
                 value={size.pricePerKg} // Display the value as stored (may include $)
@@ -419,7 +465,9 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                                 <td className="px-4 py-2 border-t" style={{color: '#111827', width: '200px'}}>{size.fishType || '-'}</td>
                                 <td className="px-4 py-2 border-t" style={{color: '#111827', width: '120px'}}>{size.cut || '-'}</td>
                                 <td className="px-4 py-2 border-t" style={{color: '#111827', width: '100px'}}>{size.grade || '-'}</td>
-                                <td className="px-4 py-2 border-t" style={{color: '#111827', width: '160px'}}>{size.weightRange || '-'}</td>
+                                <td className="px-4 py-2 border-t" style={{color: '#111827', width: '160px'}}>
+                                  {size.weightRange ? `${size.weightRange} kg` : '-'}
+                                </td>
                                 <td className="px-2 py-2 border-t text-right" style={{color: '#111827', width: '110px'}}>${airfreightPerKg.toFixed(2)}</td>
                                 <td className="px-2 py-2 border-t text-right" style={{color: '#111827', width: '100px'}}>${pricePerKg.toFixed(2)}</td>
                                 <td className="px-2 py-2 border-t text-right font-semibold" style={{color: '#1e40af', width: '100px'}}>

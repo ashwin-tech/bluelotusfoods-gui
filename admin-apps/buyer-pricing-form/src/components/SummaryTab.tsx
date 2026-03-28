@@ -1,6 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import PODialog from './PODialog';
 
+function getMonday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  date.setDate(diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function formatDate(d: Date): string {
+  return d.toISOString().split('T')[0];
+}
+
+function formatWeekLabel(monday: Date): string {
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${monday.toLocaleDateString('en-US', opts)} – ${sunday.toLocaleDateString('en-US', opts)}, ${monday.getFullYear()}`;
+}
+
 interface Company {
   company_id: number;
   company_name: string;
@@ -39,6 +59,7 @@ interface EstimateItem {
   clearing_charges: number;
   total_price: number;
   fish_size?: string;
+  fish_size_id?: number;
 }
 
 interface POInfo { po_id: number; po_number: string; status: string; }
@@ -52,6 +73,15 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [loading, setLoading] = useState(false);
+  const [weekStart, setWeekStart] = useState<Date>(getMonday(new Date()));
+
+  const goToPrevWeek = () => setWeekStart(prev => { const d = new Date(prev); d.setDate(d.getDate() - 7); return d; });
+  const goToNextWeek = () => setWeekStart(prev => { const d = new Date(prev); d.setDate(d.getDate() + 7); return d; });
+  const goToCurrentWeek = () => setWeekStart(getMonday(new Date()));
+  const handleWeekInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const d = new Date(e.target.value + 'T00:00:00');
+    if (!isNaN(d.getTime())) setWeekStart(getMonday(d));
+  };
   const [expandedEstimateIds, setExpandedEstimateIds] = useState<Set<number>>(new Set());
   const [sendingEstimateId, setSendingEstimateId] = useState<number | null>(null);
   const [sendConfirm, setSendConfirm] = useState<{ id: number; number: string } | null>(null);
@@ -93,10 +123,10 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
     return { label: '✓ PO Sent', className: 'bg-blue-100 text-blue-700 border border-blue-300 hover:bg-blue-200' };
   };
 
-  const fetchCompanyEstimates = async (companyId: number) => {
+  const fetchCompanyEstimates = async (companyId: number, ws: Date = weekStart) => {
     setLoading(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/company/${companyId}?limit=5`);
+      const response = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/company/${companyId}?week_start=${formatDate(ws)}`);
       const data = await response.json();
       if (data.success) {
         const ests = data.estimates || [];
@@ -155,8 +185,13 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
 
   const handleCompanySelect = (companyId: number) => {
     setSelectedCompanyId(companyId);
-    fetchCompanyEstimates(companyId);
+    fetchCompanyEstimates(companyId, weekStart);
   };
+
+  // Re-fetch when week changes if a company is already selected
+  useEffect(() => {
+    if (selectedCompanyId) fetchCompanyEstimates(selectedCompanyId, weekStart);
+  }, [weekStart]);
 
   const handleCreatePO = (estimate: Estimate) => {
     setPoEstimate(estimate);
@@ -267,8 +302,8 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
           </div>
         )}
 
-        {/* Toggle button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+        {/* Toggle button + Week Navigation */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
           <button
             onClick={() => setCompanyPanelOpen(prev => !prev)}
             title={companyPanelOpen ? 'Hide company list' : 'Show company list'}
@@ -287,6 +322,27 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
             </svg>
             {companyPanelOpen ? 'Hide Companies' : `Companies (${companies.length})`}
           </button>
+
+          {/* Week navigation */}
+          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2">
+            <button onClick={goToPrevWeek} className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-600" title="Previous week">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-700">{formatWeekLabel(weekStart)}</span>
+              <input
+                type="date"
+                value={formatDate(weekStart)}
+                onChange={handleWeekInput}
+                style={{ minWidth: '130px', boxSizing: 'border-box' }}
+                className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+            <button onClick={goToNextWeek} className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-600" title="Next week">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+            <button onClick={goToCurrentWeek} className="px-3 py-1 text-xs font-medium bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors">This Week</button>
+          </div>
         </div>
 
         {!selectedCompanyId && (
@@ -303,14 +359,14 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
 
         {selectedCompanyId && !loading && estimates.length === 0 && (
           <div className="text-center text-gray-500 py-12">
-            No estimates found for this company
+            No estimates found for this week
           </div>
         )}
 
         {selectedCompanyId && !loading && estimates.length > 0 && (
           <div className="space-y-4">
             <h3 className="text-lg font-semibold mb-4">
-              Recent Estimates for {companies.find(c => c.company_id === selectedCompanyId)?.company_name}
+              Estimates for {companies.find(c => c.company_id === selectedCompanyId)?.company_name} — {formatWeekLabel(weekStart)}
             </h3>
 
             {CATEGORIES.map(({ key, label, headerStyle, dotColor }) => {
