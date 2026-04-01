@@ -15,6 +15,8 @@ interface PurchaseOrder {
   created_at: string;
   estimate_number: string;
   item_count: number;
+  fulfilled_weight_kg?: number | null;
+  fulfilled_weight_lbs?: number | null;
 }
 
 interface POItem {
@@ -30,6 +32,9 @@ interface POItem {
   total_per_kg: number;
   order_weight_lbs: number;
   order_weight_kg: number;
+  is_accepted?: string | null;
+  fulfilled_weight_kg?: number | null;
+  fulfilled_weight_lbs?: number | null;
 }
 
 interface PODetail extends PurchaseOrder {
@@ -211,6 +216,10 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
   const [confirmFulfill, setConfirmFulfill] = useState(false);
   const [fulfilling, setFulfilling] = useState(false);
 
+
+  // Per-item fulfilled weight inputs (keyed by POItem.id)
+  const [fulfillWeightInputs, setFulfillWeightInputs] = useState<Record<number, string>>({});
+
   // Timeline state
   const [timeline, setTimeline] = useState<{ created_at: string; accepted_at: string | null; fulfilled_at: string | null } | null>(null);
 
@@ -250,6 +259,19 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
 
   useEffect(() => { fetchPOs(); }, [fetchPOs]);
 
+  /* ── Refresh PO list only (without resetting selected PO) ── */
+  const refreshPOList = useCallback(async () => {
+    try {
+      const ws = formatDate(weekStart);
+      const resp = await fetch(`${API_BASE_URL}/vendors/${vendorId}/purchase-orders?week_start=${ws}`);
+      const data = await resp.json();
+      if (data.success) setPurchaseOrders(data.purchase_orders || []);
+    } catch (err) {
+      console.error('Error refreshing PO list:', err);
+    }
+  }, [vendorId, weekStart]);
+
+
   /* ── Fetch PO detail + BPL status + audit log ── */
   const fetchPODetail = async (poId: number) => {
     setLoadingDetail(true);
@@ -272,6 +294,14 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
         setSelectedPO(poData.purchase_order);
         setAcceptedPorts(poData.purchase_order.accepted_ports || []);
         setRejectedPorts(poData.purchase_order.rejected_ports || []);
+        // Initialize fulfilled weight inputs from persisted DB values
+        const inputs: Record<number, string> = {};
+        for (const item of (poData.purchase_order.items || [])) {
+          if (item.fulfilled_weight_kg != null) {
+            inputs[item.id] = String(Number(item.fulfilled_weight_kg));
+          }
+        }
+        setFulfillWeightInputs(inputs);
       }
       if (bplData.success) {
         setCoveredItemIds(new Set(bplData.covered_po_item_ids || []));
@@ -280,7 +310,11 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
           map.set(bpl.port_code, bpl);
         }
         setBplsByPort(map);
-        const preChecked = new Set<number>(bplData.covered_po_item_ids || []);
+        // Pre-check: items previously accepted by vendor + items with BPL entries
+        const acceptedItemIds = poData.success
+          ? (poData.purchase_order.items || []).filter((i: POItem) => i.is_accepted === 'Y').map((i: POItem) => i.id)
+          : [];
+        const preChecked = new Set<number>([...acceptedItemIds, ...(bplData.covered_po_item_ids || [])]);
         setCheckedItems(preChecked);
       }
       if (auditData.success) {
@@ -328,7 +362,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
           });
         }
         showToast('success', action === 'accept' ? `Port ${portCode} accepted.` : `Port ${portCode} rejected.`);
-        await fetchPOs();
+        await refreshPOList();
         await fetchPODetail(selectedPO.id);
       } else {
         showToast('error', data.detail || `Failed to ${action} port ${portCode}.`);
@@ -364,7 +398,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
         showToast('success', 'PO rejected.');
         setConfirmAction(null);
         setActionNote('');
-        await fetchPOs();
+        await refreshPOList();
         await fetchPODetail(selectedPO.id);
       } else {
         showToast('error', data.detail || 'Failed to reject PO.');
@@ -382,19 +416,27 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
     if (!selectedPO) return;
     setConfirmFulfill(false);
     setFulfilling(true);
+    const weightKg = [...checkedItems].reduce((sum, id) => {
+      const n = parseFloat(fulfillWeightInputs[id] ?? '');
+      return sum + (isNaN(n) ? 0 : n);
+    }, 0);
     try {
       const resp = await fetch(
         `${API_BASE_URL}/vendors/purchase-orders/${selectedPO.id}/fulfill`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ actor_name: vendorName, actor_code: vendorCode }),
+          body: JSON.stringify({
+            actor_name: vendorName,
+            actor_code: vendorCode,
+            fulfilled_weight_kg: weightKg > 0 ? weightKg : null,
+          }),
         }
       );
       const data = await resp.json();
       if (resp.ok && data.success) {
         showToast('success', 'PO marked as fulfilled.');
-        await fetchPOs();
+        await refreshPOList();
         await fetchPODetail(selectedPO.id);
       } else {
         showToast('error', data.detail || 'Failed to mark as fulfilled.');
@@ -407,7 +449,23 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
     }
   };
 
-  /* ── Refresh BPL data after save ── */
+  /* ── Refresh BPL metadata only (no weight overwrite) ── */
+  const refreshBPLState = async (poId: number) => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/vendors/purchase-orders/${poId}/bpl`);
+      const data = await resp.json();
+      if (data.success) {
+        setCoveredItemIds(new Set(data.covered_po_item_ids || []));
+        const map = new Map<string, ExistingBPL>();
+        for (const bpl of (data.bpls || [])) map.set(bpl.port_code, bpl);
+        setBplsByPort(map);
+      }
+    } catch (err) {
+      console.error('Error refreshing BPL state:', err);
+    }
+  };
+
+  /* ── Refresh BPL data after Save & Complete (populates weights from boxes) ── */
   const refreshBPL = async () => {
     if (!selectedPO) return;
     try {
@@ -419,11 +477,35 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
         for (const bpl of (data.bpls || [])) map.set(bpl.port_code, bpl);
         setBplsByPort(map);
         setCheckedItems(new Set(data.covered_po_item_ids || []));
+
+        // Populate fulfilled weight inputs from BPL box totals (per item) and persist
+        const newInputs: Record<number, string> = {};
+        for (const bpl of (data.bpls || [])) {
+          for (const box of (bpl.boxes || [])) {
+            const boxKg = (box.pieces && box.pieces.length > 0)
+              ? box.pieces.reduce((s: number, p: { weight_kg: number }) => s + (p.weight_kg || 0), 0)
+              : (box.net_weight_kg || 0);
+            newInputs[box.po_item_id] = (
+              parseFloat(newInputs[box.po_item_id] ?? '0') + boxKg
+            ).toFixed(2);
+          }
+        }
+        setFulfillWeightInputs(prev => ({ ...prev, ...newInputs }));
+        // Persist each item's weight to DB
+        for (const [itemId, kgStr] of Object.entries(newInputs)) {
+          const kg = parseFloat(kgStr);
+          fetch(`${API_BASE_URL}/vendors/purchase-orders/items/${itemId}/fulfilled-weight`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fulfilled_weight_kg: isNaN(kg) ? null : kg }),
+          }).catch(err => console.error('Error saving fulfilled weight from BPL:', err));
+        }
       }
     } catch (err) {
       console.error('Error refreshing BPL:', err);
     }
     setBplFormOpen(null);
+    await refreshPOList();
   };
 
   /* ── Send BPL emails ── */
@@ -432,17 +514,26 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
     setConfirmSend(null); // close confirmation
     setSendingBPL(portCode);
     try {
+      // Sum fulfilled weight inputs for selected items only
+      const totalFulfilledKg = [...checkedItems].reduce((sum, id) => {
+        const n = parseFloat(fulfillWeightInputs[id] ?? '');
+        return sum + (isNaN(n) ? 0 : n);
+      }, 0);
       const resp = await fetch(
         `${API_BASE_URL}/vendors/purchase-orders/${selectedPO.id}/bpl/${encodeURIComponent(portCode)}/send-email`,
-        { method: 'POST' },
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fulfilled_weight_kg: totalFulfilledKg > 0 ? totalFulfilledKg : null }),
+        },
       );
       const data = await resp.json();
       if (resp.ok && data.success) {
         showToast('success', `BPL emails sent for port ${portCode}!`);
-        await refreshBPL();
+        await refreshBPLState(selectedPO.id);
         // Re-fetch PO detail to pick up any auto-fulfilled status change
         await fetchPODetail(selectedPO.id);
-        await fetchPOs();
+        await refreshPOList();
       } else {
         showToast('error', `Failed to send: ${data.detail || data.message || 'Unknown error'}`);
       }
@@ -464,21 +555,45 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
   };
 
   /* ── Checkbox helpers ── */
+  const persistItemAccepted = (id: number, accepted: boolean) => {
+    fetch(`${API_BASE_URL}/vendors/purchase-orders/items/${id}/accept`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_accepted: accepted }),
+    }).catch(err => console.error('Error persisting is_accepted:', err));
+  };
+
+  const clearItemFulfilledWeight = (id: number) => {
+    setFulfillWeightInputs(prev => { const next = { ...prev }; delete next[id]; return next; });
+    fetch(`${API_BASE_URL}/vendors/purchase-orders/items/${id}/fulfilled-weight`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fulfilled_weight_kg: null }),
+    }).catch(err => console.error('Error clearing fulfilled weight:', err));
+  };
+
   const toggleItem = (id: number) => {
+    const nowAccepted = !checkedItems.has(id);
     setCheckedItems(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      nowAccepted ? next.add(id) : next.delete(id);
       return next;
     });
+    persistItemAccepted(id, nowAccepted);
+    if (!nowAccepted) clearItemFulfilledWeight(id);
   };
 
   const togglePort = (portItems: POItem[]) => {
     const ids = portItems.map(i => i.id);
-    const allChecked = ids.every(id => checkedItems.has(id));
+    const nowAccepted = !ids.every(id => checkedItems.has(id));
     setCheckedItems(prev => {
       const next = new Set(prev);
-      ids.forEach(id => allChecked ? next.delete(id) : next.add(id));
+      ids.forEach(id => nowAccepted ? next.add(id) : next.delete(id));
       return next;
+    });
+    ids.forEach(id => {
+      persistItemAccepted(id, nowAccepted);
+      if (!nowAccepted) clearItemFulfilledWeight(id);
     });
   };
 
@@ -507,6 +622,10 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
 
   /* ── Derived: items grouped by port ── */
   const portGroups = selectedPO ? groupByPort(selectedPO.items) : new Map<string, POItem[]>();
+
+  /* ── Derived: fulfill enabled when ≥1 item checked and all checked items have weight ── */
+  const canFulfill = checkedItems.size > 0 &&
+    [...checkedItems].every(id => parseFloat(fulfillWeightInputs[id] ?? '') > 0);
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6">
@@ -557,6 +676,11 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                     Estimate #{po.estimate_number} · {po.item_count} item{po.item_count !== 1 ? 's' : ''}
                   </div>
                   <div className="mt-0.5 text-xs text-gray-400">{new Date(po.created_at).toLocaleDateString()}</div>
+                  {po.fulfilled_weight_kg != null && (
+                    <div className="mt-0.5 text-xs font-medium text-emerald-600">
+                      ✓ {Number(po.fulfilled_weight_kg).toFixed(2)} kg / {po.fulfilled_weight_lbs != null ? Number(po.fulfilled_weight_lbs).toFixed(2) : (Number(po.fulfilled_weight_kg) * 2.205).toFixed(2)} lbs
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -626,13 +750,15 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                   {selectedPO.status === 'accepted' && (
                     <button
                       onClick={() => setConfirmFulfill(true)}
-                      disabled={fulfilling}
-                      title="Mark this PO as fulfilled without a BPL (for vendors managing shipping outside the portal)"
+                      disabled={!canFulfill || fulfilling}
+                      title={!canFulfill ? 'Select items and enter fulfilled weight for each' : 'Mark this PO as fulfilled'}
                       style={{
-                        padding: '7px 18px', backgroundColor: '#f9fafb', color: '#6b7280',
-                        border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px',
-                        fontWeight: 500, cursor: fulfilling ? 'wait' : 'pointer',
-                        opacity: fulfilling ? 0.6 : 1,
+                        padding: '7px 18px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, border: '1px solid',
+                        cursor: (!canFulfill || fulfilling) ? 'not-allowed' : 'pointer',
+                        opacity: (!canFulfill || fulfilling) ? 0.5 : 1,
+                        backgroundColor: canFulfill ? '#f0fdf4' : '#f9fafb',
+                        color: canFulfill ? '#15803d' : '#6b7280',
+                        borderColor: canFulfill ? '#86efac' : '#d1d5db',
                       }}
                     >
                       {fulfilling ? 'Marking…' : '✓ Mark as Fulfilled'}
@@ -708,10 +834,10 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                   const isPortAccepted = acceptedPorts.includes(port);
                   const isPortRejected = rejectedPorts.includes(port);
                   const canCreateBPL = isPortAccepted;
-                  const poTerminated = ['rejected', 'cancelled'].includes(selectedPO.status);
                   const isToggling = togglingPort === port;
                   const bplSent = portBPL?.status === 'sent';
-                  const toggleLocked = bplSent; // cannot change after BPL is sent
+                  const poFulfilled = selectedPO.status === 'fulfilled';
+                  const toggleLocked = bplSent || poFulfilled;
 
                   return (
                     <div key={port} style={{ marginBottom: '20px', border: '1px solid #d1d5db', borderRadius: '8px', overflow: 'hidden' }}>
@@ -722,8 +848,9 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                             type="checkbox"
                             checked={allChecked}
                             ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
-                            onChange={() => togglePort(items)}
-                            style={S.checkbox}
+                            onChange={() => !poFulfilled && togglePort(items)}
+                            disabled={poFulfilled}
+                            style={{ ...S.checkbox, opacity: poFulfilled ? 0.4 : 1 }}
                           />
                           <span style={{ fontSize: '14px', fontWeight: 700, color: '#0A3D5C' }}>
                             Port: {port}
@@ -739,8 +866,8 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                           )}
                         </div>
                         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                          {/* Port accept/reject toggle slider — hidden after BPL sent, locked only when BPL sent */}
-                          {!bplSent && <div
+                          {/* Port accept/reject toggle — hidden after BPL sent or PO fulfilled */}
+                          {!bplSent && !poFulfilled && <div
                             onClick={() => !isToggling && !toggleLocked && handleTogglePort(port, isPortAccepted ? 'reject' : 'accept')}
                             style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: toggleLocked ? 'not-allowed' : isToggling ? 'wait' : 'pointer', opacity: isToggling ? 0.6 : 1, userSelect: 'none' }}
                             title={toggleLocked ? 'Cannot change — BPL already sent' : isPortAccepted ? 'Click to reject this port' : 'Click to accept this port'}
@@ -775,18 +902,20 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                           {(selectedPO.status === 'rejected' || selectedPO.status === 'cancelled') && (
                             <span style={{ fontSize: '12px', color: '#9ca3af', fontStyle: 'italic' }}>PO not active</span>
                           )}
-                          {!bplSent && (canCreateBPL && portBPL ? (
+                          {!poFulfilled && (canCreateBPL && portBPL ? (
                             <>
-                              <button
-                                style={S.bplBtnEdit}
-                                onClick={() => {
-                                  const existingPoItemIds = new Set(portBPL.boxes.map(b => b.po_item_id));
-                                  const editItems = items.filter(i => existingPoItemIds.has(i.id) || checkedItems.has(i.id));
-                                  setBplFormOpen({ portCode: port, items: editItems, existing: portBPL });
-                                }}
-                              >
-                                ✏️ Edit BPL
-                              </button>
+                              {!bplSent && (
+                                <button
+                                  style={S.bplBtnEdit}
+                                  onClick={() => {
+                                    const existingPoItemIds = new Set(portBPL.boxes.map(b => b.po_item_id));
+                                    const editItems = items.filter(i => existingPoItemIds.has(i.id) || checkedItems.has(i.id));
+                                    setBplFormOpen({ portCode: port, items: editItems, existing: portBPL });
+                                  }}
+                                >
+                                  ✏️ Edit BPL
+                                </button>
+                              )}
                               {portBPL.status === 'completed' && (
                                 <button
                                   style={sendingBPL === port ? S.bplBtnSending : S.bplBtnSend}
@@ -828,8 +957,8 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                             <th style={S.th('right')}>Price/kg</th>
                             <th style={S.th('right')}>Freight/kg</th>
                             <th style={S.th('right')}>Total/kg</th>
-                            <th style={S.th('right')}>Wt (lbs)</th>
                             <th style={S.th('right')}>Wt (kg)</th>
+                            <th style={S.th('right')}>Fulfilled Wt (kg)</th>
                             <th style={{ ...S.th('left'), width: '50px', textAlign: 'center' }}>BPL</th>
                           </tr>
                         </thead>
@@ -846,8 +975,9 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                                   <input
                                     type="checkbox"
                                     checked={isChecked}
-                                    onChange={() => toggleItem(item.id)}
-                                    style={S.checkbox}
+                                    onChange={() => !poFulfilled && toggleItem(item.id)}
+                                    disabled={poFulfilled}
+                                    style={{ ...S.checkbox, opacity: poFulfilled ? 0.4 : 1 }}
                                   />
                                 </td>
                                 <td style={S.td('left')}>{item.fish_name}</td>
@@ -857,8 +987,44 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                                 <td style={{ ...S.td('right'), fontWeight: 500 }}>${Number(item.price_per_kg).toFixed(2)}</td>
                                 <td style={S.td('right')}>${Number(item.airfreight_per_kg).toFixed(2)}</td>
                                 <td style={{ ...S.td('right'), fontWeight: 600 }}>${Number(item.total_per_kg).toFixed(2)}</td>
-                                <td style={S.td('right')}>{Number(item.order_weight_lbs).toLocaleString()}</td>
                                 <td style={{ ...S.td('right'), color: '#065f46', fontWeight: 600 }}>{Number(item.order_weight_kg).toLocaleString()}</td>
+                                {(() => {
+                                  const inputVal = fulfillWeightInputs[item.id] ?? '';
+                                  const parsedKg = parseFloat(inputVal);
+                                  return (
+                                    <td style={{ ...S.td('right'), padding: '4px 6px' }}>
+                                      {bplSent || selectedPO.fulfilled_weight_kg != null ? (
+                                        <span style={{ color: parsedKg > 0 ? '#059669' : '#9ca3af', fontWeight: parsedKg > 0 ? 600 : 400 }}>
+                                          {parsedKg > 0 ? parsedKg.toFixed(2) : '—'}
+                                        </span>
+                                      ) : (
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={inputVal}
+                                          disabled={!isChecked}
+                                          onChange={e => setFulfillWeightInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                          onBlur={e => {
+                                            const kg = parseFloat(e.target.value);
+                                            fetch(`${API_BASE_URL}/vendors/purchase-orders/items/${item.id}/fulfilled-weight`, {
+                                              method: 'PATCH',
+                                              headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ fulfilled_weight_kg: isNaN(kg) ? null : kg }),
+                                            }).catch(err => console.error('Error saving fulfilled weight:', err));
+                                          }}
+                                          placeholder="kg"
+                                          style={{
+                                            width: '80px', padding: '4px 6px', border: '1px solid #d1d5db',
+                                            borderRadius: '4px', fontSize: '12px', textAlign: 'right',
+                                            outline: 'none', color: '#059669', fontWeight: 600,
+                                            opacity: isChecked ? 1 : 0.35, cursor: isChecked ? 'auto' : 'not-allowed',
+                                          }}
+                                        />
+                                      )}
+                                    </td>
+                                  );
+                                })()}
                                 <td style={{ ...S.td('left'), textAlign: 'center' }}>
                                   {isCovered && (
                                     <span title="BPL exists for this item" style={{ color: '#059669', fontSize: '16px', fontWeight: 700 }}>✓</span>
@@ -875,16 +1041,21 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                 })}
 
                 {/* Grand totals */}
-                {selectedPO.items.length > 0 && (
-                  <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end', gap: '24px', fontSize: '13px', fontWeight: 700, color: '#000' }}>
-                    <span>
-                      Total: {selectedPO.items.reduce((s, i) => s + Number(i.order_weight_lbs), 0).toLocaleString()} lbs
-                    </span>
-                    <span style={{ color: '#065f46' }}>
-                      {selectedPO.items.reduce((s, i) => s + Number(i.order_weight_kg), 0).toLocaleString()} kg
-                    </span>
-                  </div>
-                )}
+                {selectedPO.items.length > 0 && (() => {
+                  const totalFulfilledKg = selectedPO.items.reduce((s, i) => {
+                    if (!checkedItems.has(i.id)) return s;
+                    const n = parseFloat(fulfillWeightInputs[i.id] ?? '');
+                    return s + (isNaN(n) ? 0 : n);
+                  }, 0);
+                  return (
+                    <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end', gap: '24px', fontSize: '13px', fontWeight: 700 }}>
+                      <span style={{ color: '#6b7280' }}>Fulfilled Total:</span>
+                      <span style={{ color: totalFulfilledKg > 0 ? '#059669' : '#9ca3af' }}>
+                        {totalFulfilledKg > 0 ? totalFulfilledKg.toFixed(2) : '—'} kg
+                      </span>
+                    </div>
+                  );
+                })()}
 
                 {/* Audit Log */}
                 {auditLog.length > 0 && (
@@ -1011,16 +1182,14 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
         }} onClick={() => setConfirmFulfill(false)}>
           <div style={{
             backgroundColor: '#fff', borderRadius: '12px', padding: '28px 32px',
-            maxWidth: '420px', width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            maxWidth: '380px', width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
             animation: 'poToastIn 0.2s ease-out',
           }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: '16px', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#1e293b', marginBottom: '10px' }}>
               ✓ Mark PO as Fulfilled?
             </div>
             <p style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.5, margin: '0 0 20px' }}>
-              This will mark <strong>{selectedPO.po_number}</strong> as fulfilled for all accepted ports at once — without requiring a Box Packaging List.
-              <br /><br />
-              Only use this if you are managing shipping details <strong>outside the portal</strong>.
+              This will mark <strong>{selectedPO.po_number}</strong> as fulfilled.
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
               <button
@@ -1030,7 +1199,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
               <button
                 onClick={handleFulfill}
                 style={{ padding: '8px 20px', backgroundColor: '#059669', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
-              >Yes, Mark Fulfilled</button>
+              >✓ Confirm Fulfill</button>
             </div>
           </div>
         </div>
