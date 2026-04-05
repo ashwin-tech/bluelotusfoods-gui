@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ClearingPricingForm from './ClearingPricingForm';
 import SummaryTab from './SummaryTab';
+import ReportsTab from './ReportsTab';
 
 // Utility function to format date with day of the week
 const formatDateWithDay = (dateString: string): string => {
@@ -92,7 +93,7 @@ interface CompanyFormState {
 
 const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [mainTab, setMainTab] = useState<'buyer-pricing' | 'clearing-pricing' | 'summary'>('buyer-pricing');
+  const [mainTab, setMainTab] = useState<'buyer-pricing' | 'clearing-pricing' | 'summary' | 'reports'>('buyer-pricing');
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [selectedBuyers, setSelectedBuyers] = useState<number[]>([]);
   const [selectedCustomerTab, setSelectedCustomerTab] = useState<number | null>(null);
@@ -855,6 +856,16 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
           >
             Summary
           </button>
+          <button
+            onClick={() => setMainTab('reports')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              mainTab === 'reports'
+                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            Reports
+          </button>
         </div>
       </div>
 
@@ -1348,6 +1359,14 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
         <div className="p-6">
           <h2 className="text-2xl font-bold mb-6">Estimate Summary</h2>
           <SummaryTab companies={filteredCompanies} apiBaseUrl={apiBaseUrl} />
+        </div>
+      )}
+
+      {/* Reports Tab Content */}
+      {mainTab === 'reports' && (
+        <div className="p-6">
+          <h2 className="text-2xl font-bold mb-6">Fulfilled PO Report</h2>
+          <ReportsTab companies={filteredCompanies} apiBaseUrl={apiBaseUrl} />
         </div>
       )}
       </div>
