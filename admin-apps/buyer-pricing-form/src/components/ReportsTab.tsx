@@ -268,7 +268,7 @@ const ReportsTab: React.FC<ReportsTabProps> = ({ companies, apiBaseUrl }) => {
                   </tr>
                   {/* ── Column header row ── */}
                   <tr>
-                    {(['Fish','Cut','Grade','Size','Port'] as const).map((h, i) => (
+                    {(['Fish','Cut','Grade','Size','Port'] as const).map(h => (
                       <th key={h} style={thCol(TOKEN.info, 'left')}>{h}</th>
                     ))}
                     {(['Vendor','Price/kg','Wt (kg)','Wt (lbs)','Invoice'] as const).map((h, i) => (
