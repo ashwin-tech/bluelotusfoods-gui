@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { FormData } from './types';
 
 interface FishSize {
@@ -33,6 +33,7 @@ interface Props {
   toggleSizeSelected: (index: number) => void;
   addDestination: () => void;
   addSize: () => void;
+  cloneDestination: (index: number) => void;
   deleteSelectedDestinations: () => void;
   deleteSelectedSizes: () => void;
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
@@ -59,6 +60,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
     toggleSizeSelected,
     addDestination,
     addSize,
+    cloneDestination,
     deleteSelectedDestinations,
     deleteSelectedSizes,
     handleSubmit,
@@ -174,6 +176,7 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
             <div className="text-left">Arrival Date <span className="text-red-500">*</span></div>
             <div className="text-left">Min Wt (Kg)</div>
             <div className="text-left">Max Wt (Kg)</div>
+            <div />
           </div>
           
           {/* Data rows */}
@@ -247,6 +250,17 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                 onChange={(e) => handleDestinationChange(idx, e)}
                 className="form-input"
               />
+              <button
+                type="button"
+                onClick={() => cloneDestination(idx)}
+                title="Clone row"
+                className="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 hover:bg-blue-100 hover:text-blue-600 text-gray-400 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="9" y="9" width="13" height="13" rx="2" strokeLinejoin="round" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+              </button>
             </div>
           ))}
           <div className="flex gap-2 mt-2">
@@ -430,16 +444,32 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
           <div className="border-2 border-blue-200 rounded-lg p-6 bg-blue-50">
             <h2 className="text-xl font-bold mb-4 text-blue-900">Quote Summary</h2>
             
-            {formData.destinations
-              .filter(dest => dest.destination) // Only show destinations that have a destination selected
-              .map((destination, destIndex) => {
-                const airfreightPerKg = parseFloat(destination.airfreightPerKg.replace(/[^0-9.]/g, '') || "0");
-                
+            {(() => {
+              // Group destinations by their airfreight/kg value so same-price destinations share one section
+              const activeDests = formData.destinations.filter(dest => dest.destination);
+              const groups = new Map<number, typeof activeDests>();
+              activeDests.forEach(dest => {
+                const rate = parseFloat(dest.airfreightPerKg.replace(/[^0-9.]/g, '') || "0");
+                if (!groups.has(rate)) groups.set(rate, []);
+                groups.get(rate)!.push(dest);
+              });
+              return Array.from(groups.entries()).map(([airfreightPerKg, dests]) => {
+                const destsWithDate = dests.filter(d => d.arrivalDate);
+                const arrivalLabel = destsWithDate.length > 0
+                  ? (() => {
+                      const byDate = new Map<string, string[]>();
+                      destsWithDate.forEach(d => {
+                        if (!byDate.has(d.arrivalDate)) byDate.set(d.arrivalDate, []);
+                        byDate.get(d.arrivalDate)!.push(d.destination);
+                      });
+                      const parts = Array.from(byDate.entries()).map(([date, ports]) => `${ports.join(', ')}: ${date}`);
+                      return ` : Arrival Date - ${parts.join(', ')}`;
+                    })()
+                  : '';
                 return (
-                  <div key={destination.id} className="mb-6 last:mb-0">
+                  <div key={airfreightPerKg} className="mb-6 last:mb-0">
                     <h3 className="text-lg font-semibold mb-3 text-blue-800">
-                      {destination.destination}
-                      {destination.arrivalDate && ` - Arrival: ${destination.arrivalDate}`}
+                      Port{arrivalLabel}
                     </h3>
                     
                     <div className="overflow-x-auto">
@@ -480,14 +510,17 @@ const VendorQuoteFormView: React.FC<Props> = (props) => {
                       </table>
                     </div>
                     
-                    {destination.minWeight && destination.maxWeight && (
+                    {dests.some(d => d.minWeight || d.maxWeight) && (
                       <p className="text-sm text-gray-600 mt-2">
-                        Weight Range: {destination.minWeight} - {destination.maxWeight} kg
+                        {dests.filter(d => d.minWeight || d.maxWeight).map(d =>
+                          `${d.destination}: ${d.minWeight || '–'} – ${d.maxWeight || '–'} kg`
+                        ).join(' | ')}
                       </p>
                     )}
                   </div>
                 );
-              })}
+              });
+            })()}
           </div>
         )}
 

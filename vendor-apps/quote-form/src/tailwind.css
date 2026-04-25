@@ -9,7 +9,7 @@
 
     .grid-dest{
         display: grid;
-        grid-template-columns: auto 2fr 1.5fr 1.5fr 1fr 1fr 1fr;
+        grid-template-columns: auto 2fr 1.5fr 1.5fr 1fr 1fr 28px;
         gap: theme('spacing.2');
         align-items: center;
     }
@@ -17,7 +17,7 @@
     .grid-dest-header {
         @apply font-semibold text-gray-700 border-b pb-1 mb-1;
         display: grid;
-        grid-template-columns: auto 2fr 1.5fr 1.5fr 1fr 1fr 1fr;
+        grid-template-columns: auto 2fr 1.5fr 1.5fr 1fr 1fr 28px;
         gap: theme('spacing.2');
     }
 

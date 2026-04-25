@@ -98,6 +98,15 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
     });
   };
 
+  const cloneDestination = (index: number) => {
+    setFormData((prev) => {
+      const updated = [...prev.destinations];
+      const clone = { ...updated[index], id: cryptoRandomId(), selected: false };
+      updated.splice(index + 1, 0, clone);
+      return { ...prev, destinations: updated };
+    });
+  };
+
   const addDestination = () => {
     setFormData((prev) => ({
       ...prev,
@@ -327,6 +336,7 @@ export default function VendorQuoteForm({ initialVendorName = '', initialCountry
       deleteSelectedDestinations={deleteSelectedDestinations}
       deleteSelectedSizes={deleteSelectedSizes}
       handleSubmit={handleSubmit}
+      cloneDestination={cloneDestination}
       toggleAllDestinations={toggleAllDestinations}
       toggleAllSizes={toggleAllSizes}
       vendorNameReadOnly={vendorNameReadOnly}

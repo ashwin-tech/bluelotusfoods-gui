@@ -98,7 +98,10 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
       const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/by-estimate/${estimateId}`);
       const data = await resp.json();
       if (data.success && data.purchase_orders) {
-        const pos: POInfo[] = Object.values(data.purchase_orders).map((po: any) => ({
+        const poList: any[] = Array.isArray(data.purchase_orders)
+          ? data.purchase_orders
+          : Object.values(data.purchase_orders);
+        const pos: POInfo[] = poList.map((po: any) => ({
           po_id: po.po_id,
           po_number: po.po_number,
           status: po.status,
@@ -228,29 +231,51 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
   ];
 
   const groupEstimateItems = (items: EstimateItem[]) => {
-    const itemsByGroup: Record<string, EstimateItem[]> = {};
-    
-    items?.forEach((item) => {
-      const groupKey = `${item.fish_species_id}-${item.cut_id}-${item.grade_id}-${item.fish_size || 'no-size'}-${item.port_code}`;
-      if (!itemsByGroup[groupKey]) {
-        itemsByGroup[groupKey] = [];
-      }
-      itemsByGroup[groupKey].push(item);
+    // Step 1: bucket by species/cut/grade/size/vendor/port
+    const byPortKey: Record<string, EstimateItem[]> = {};
+    items?.forEach(item => {
+      const k = `${item.fish_species_id}|${item.cut_id}|${item.grade_id}|${item.fish_size || ''}|${item.vendor_id}|${item.port_code}`;
+      if (!byPortKey[k]) byPortKey[k] = [];
+      byPortKey[k].push(item);
     });
 
-    // Sort groups alphabetically by fish name, then cut, grade, size, port
+    // Step 2: merge ports whose tier prices are identical into one display group
+    const itemsByGroup: Record<string, { items: EstimateItem[]; ports: string[] }> = {};
+    Object.entries(byPortKey).forEach(([, portItems]) => {
+      const first = portItems[0];
+      const speciesKey = `${first.fish_species_id}|${first.cut_id}|${first.grade_id}|${first.fish_size || ''}|${first.vendor_id}`;
+      const priceFP = portItems
+        .map(i => `${i.fish_price.toFixed(4)}|${i.margin.toFixed(4)}|${i.freight_price.toFixed(4)}|${i.tariff_percent.toFixed(4)}|${i.clearing_charges.toFixed(4)}|${i.total_price.toFixed(4)}`)
+        .sort()
+        .join('~');
+      const groupKey = `${speciesKey}~~${priceFP}`;
+      if (!itemsByGroup[groupKey]) {
+        itemsByGroup[groupKey] = { items: portItems, ports: [first.port_code] };
+      } else {
+        itemsByGroup[groupKey].ports.push(first.port_code);
+      }
+    });
+
+    // Sort ports within each group alphabetically
+    Object.values(itemsByGroup).forEach(g => g.ports.sort());
+
+    // Sort: multi-port groups first, then by port string, then fish → cut → grade → size
     const groupKeys = Object.keys(itemsByGroup).sort((a, b) => {
-      const itemsA = itemsByGroup[a][0];
-      const itemsB = itemsByGroup[b][0];
-      const portCompare = (itemsA?.port_code || '').localeCompare(itemsB?.port_code || '');
+      const ga = itemsByGroup[a];
+      const gb = itemsByGroup[b];
+      const ia = ga.items[0];
+      const ib = gb.items[0];
+      // Multi-port groups before single-port
+      const multiDiff = gb.ports.length - ga.ports.length;
+      if (multiDiff !== 0) return multiDiff;
+      // Within same port count, sort by port string so same-port groups are together
+      const portCompare = ga.ports.join(',').localeCompare(gb.ports.join(','));
       if (portCompare !== 0) return portCompare;
-      const fishCompare = (itemsA?.common_name || '').localeCompare(itemsB?.common_name || '');
-      if (fishCompare !== 0) return fishCompare;
-      const cutCompare = (itemsA?.cut_name || '').localeCompare(itemsB?.cut_name || '');
-      if (cutCompare !== 0) return cutCompare;
-      const gradeCompare = (itemsA?.grade_name || '').localeCompare(itemsB?.grade_name || '');
-      if (gradeCompare !== 0) return gradeCompare;
-      return (itemsA?.fish_size || '').localeCompare(itemsB?.fish_size || '');
+      return (ia?.common_name || '').localeCompare(ib?.common_name || '')
+          || (ia?.cut_name || '').localeCompare(ib?.cut_name || '')
+          || (ia?.grade_name || '').localeCompare(ib?.grade_name || '')
+          || (ia?.fish_size || '').localeCompare(ib?.fish_size || '')
+          || (ia?.total_price || 0) - (ib?.total_price || 0);
     });
 
     return { itemsByGroup, groupKeys };
@@ -474,7 +499,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                     {isExpanded && estimate.items && estimate.items.length > 0 && (
                       <div className="p-4 space-y-6">
                         {groupKeys.map((groupKey) => {
-                          const groupItems = itemsByGroup[groupKey];
+                          const { items: groupItems, ports: groupPorts } = itemsByGroup[groupKey];
                           const firstItem = groupItems[0];
                           
                           // Format fish_size with "lbs+" suffix
@@ -500,7 +525,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ companies, apiBaseUrl }) => {
                               <div className="flex items-center justify-between mb-3">
                                 <h4 className="text-md font-semibold text-gray-700">{groupLabel}</h4>
                                 <span className="text-sm text-gray-600 font-medium">
-                                  Port: {firstItem.port_code}
+                                  Port: {groupPorts.join(', ')}
                                   {firstItem.margin > 0 && (
                                     <span className="ml-2 font-semibold" style={{ color: '#16a34a' }}>+${firstItem.margin.toFixed(2)}/lb</span>
                                   )}
