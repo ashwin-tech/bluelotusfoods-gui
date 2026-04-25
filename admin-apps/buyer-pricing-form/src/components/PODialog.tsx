@@ -89,6 +89,7 @@ interface SentPO {
   po_number: string;
   status: string;
   vendor_id: number;
+  port_code: string;
   items: SentPOItem[];
 }
 
@@ -147,28 +148,40 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   const [expandedVendors, setExpandedVendors] = useState<Set<number>>(new Set());
   const [orderWeights, setOrderWeights] = useState<OrderWeights>({});
   const [selectedLines, setSelectedLines] = useState<Record<string, boolean>>({});
-  // Track which vendors already have POs (keyed by vendor_id)
-  const [sentPOs, setSentPOs] = useState<Record<number, SentPO>>({});
+  // Track POs keyed by "${vendor_id}-${port_code}" — one PO per vendor+port
+  const [sentPOs, setSentPOs] = useState<Record<string, SentPO>>({});
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [cancelConfirm, setCancelConfirm] = useState<SentPO | null>(null);
   const [sendingAll, setSendingAll] = useState(false);
-  // Timeline data per po_id
-  const [poTimelines, setPoTimelines] = useState<Record<number, { created_at: string; accepted_at: string | null; fulfilled_at: string | null }>>({});
-  // Editable delivery date range — defaults from estimate, or today+3 / today+5
+  // Per-port delivery dates keyed by port_code
   const defaultFrom = (() => {
     if (estimate.delivery_date_from) return estimate.delivery_date_from;
-    const d = new Date();
-    d.setDate(d.getDate() + 3);
+    const d = new Date(); d.setDate(d.getDate() + 3);
     return d.toISOString().split('T')[0];
   })();
   const defaultTo = (() => {
     if (estimate.delivery_date_to) return estimate.delivery_date_to;
-    const d = new Date();
-    d.setDate(d.getDate() + 5);
+    const d = new Date(); d.setDate(d.getDate() + 5);
     return d.toISOString().split('T')[0];
   })();
-  const [deliveryDateFrom, setDeliveryDateFrom] = useState<string>(defaultFrom);
-  const [deliveryDateTo, setDeliveryDateTo] = useState<string>(defaultTo);
+  const [portDates, setPortDates] = useState<Record<string, { from: string; to: string }>>({});
+
+  const getPortDate = (portCode: string) =>
+    portDates[portCode] ?? { from: defaultFrom, to: defaultTo };
+
+  const setPortFrom = (portCode: string, from: string) =>
+    setPortDates(prev => {
+      const cur = prev[portCode] ?? { from: defaultFrom, to: defaultTo };
+      let to = cur.to;
+      if (from && (!to || to < from)) {
+        const d = new Date(from); d.setDate(d.getDate() + 2);
+        to = d.toISOString().split('T')[0];
+      }
+      return { ...prev, [portCode]: { from, to } };
+    });
+
+  const setPortTo = (portCode: string, to: string) =>
+    setPortDates(prev => ({ ...prev, [portCode]: { ...(prev[portCode] ?? { from: defaultFrom, to: defaultTo }), to } }));
 
   useEffect(() => {
     fetchVendorQuotes();
@@ -181,17 +194,19 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     }
   }, [toast]);
 
-  // Pre-populate order weights from existing PO items when dialog reopens for a sent PO
+  // Pre-populate order weights from existing PO items when dialog loads
   useEffect(() => {
     if (vendorGroups.length === 0) return;
     const initialWeights: OrderWeights = {};
     vendorGroups.forEach(group => {
-      const po = sentPOs[group.vendor_id];
-      console.log(`[PODialog] prepopulate vendor=${group.vendor_name} po_items=${po?.items?.length ?? 'none'}`);
-      if (!po?.items?.length) return;
+      // Gather all items across all port POs for this vendor
+      const allItems = Object.values(sentPOs)
+        .filter(po => po.vendor_id === group.vendor_id)
+        .flatMap(po => po.items || []);
+      if (allItems.length === 0) return;
       const poLines = buildPOLines(group);
       poLines.forEach((line, idx) => {
-        const match = po.items.find(
+        const match = allItems.find(
           item =>
             item.fish_name === line.fish_name &&
             item.cut_name === line.cut_name &&
@@ -199,7 +214,6 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
             item.fish_size === line.fish_size &&
             item.port_code === line.port_code
         );
-        console.log(`[PODialog] line ${idx}: ${line.fish_name}/${line.cut_name}/${line.port_code} → match=${!!match} weight=${match?.order_weight_lbs ?? '-'}`);
         if (match) {
           initialWeights[`${group.vendor_id}-${idx}`] = String(match.order_weight_lbs);
         }
@@ -271,48 +285,27 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
     // Expand all vendors by default
     setExpandedVendors(new Set(groups.map((g) => g.vendor_id)));
 
-    // Fetch existing POs for this estimate to know which vendors already have POs
+    // Fetch existing POs for this estimate (flat list, one per vendor+port)
     try {
       const poResp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/by-estimate/${estimate.id}`);
       const poData = await poResp.json();
       if (poData.success && poData.purchase_orders) {
-        const existing: Record<number, SentPO> = {};
-        for (const [vid, po] of Object.entries(poData.purchase_orders)) {
-          const poObj = po as { id: number; po_number: string; status: string; vendor_id: number; items?: SentPOItem[] };
-          existing[Number(vid)] = {
-            po_id: poObj.id,
-            po_number: poObj.po_number,
-            status: poObj.status,
-            vendor_id: poObj.vendor_id,
-            items: (poObj as any).items || [],
+        const poList: any[] = Array.isArray(poData.purchase_orders)
+          ? poData.purchase_orders
+          : Object.values(poData.purchase_orders);
+        const existing: Record<string, SentPO> = {};
+        for (const po of poList) {
+          const key = `${po.vendor_id}-${po.port_code}`;
+          existing[key] = {
+            po_id: po.po_id ?? po.id,
+            po_number: po.po_number,
+            status: po.status,
+            vendor_id: po.vendor_id,
+            port_code: po.port_code,
+            items: po.items || [],
           };
         }
         setSentPOs(existing);
-        console.log('[PODialog] sentPOs loaded:', JSON.stringify(
-          Object.entries(existing).map(([vid, po]) => ({
-            vendor_id: vid, po_number: po.po_number, item_count: po.items.length, items: po.items
-          }))
-        ));
-
-        // Fetch timelines for all found POs in parallel
-        const poList = Object.values(existing);
-        if (poList.length > 0) {
-          const timelineResults = await Promise.all(
-            poList.map(po =>
-              fetch(`${apiBaseUrl}/vendors/purchase-orders/${po.po_id}/timeline`)
-                .then(r => r.json())
-                .then(d => ({ po_id: po.po_id, data: d }))
-                .catch(() => ({ po_id: po.po_id, data: null }))
-            )
-          );
-          const timelines: Record<number, { created_at: string; accepted_at: string | null; fulfilled_at: string | null }> = {};
-          for (const { po_id, data } of timelineResults) {
-            if (data?.success) {
-              timelines[po_id] = { created_at: data.created_at, accepted_at: data.accepted_at, fulfilled_at: data.fulfilled_at };
-            }
-          }
-          setPoTimelines(timelines);
-        }
       }
     } catch (err) {
       console.error('Error fetching existing POs:', err);
@@ -482,10 +475,18 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       return;
     }
 
-    if (!deliveryDateFrom || !deliveryDateTo) {
-      setToast({ type: 'error', message: 'Please set both delivery From and To dates before sending the PO.' });
+    // Build per-port delivery dates from state
+    const portDatesPayload: Record<string, { from: string | null; to: string | null }> = {};
+    const uniquePorts = [...new Set(linesWithWeights.map(l => l.port_code))];
+    const missingDates = uniquePorts.filter(p => !getPortDate(p).from || !getPortDate(p).to);
+    if (missingDates.length > 0) {
+      setToast({ type: 'error', message: `Please set delivery dates for: ${missingDates.join(', ')}` });
       return;
     }
+    uniquePorts.forEach(p => {
+      const d = getPortDate(p);
+      portDatesPayload[p] = { from: d.from || null, to: d.to || null };
+    });
 
     setSendingVendorId(group.vendor_id);
     try {
@@ -497,26 +498,23 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
           estimate_id: estimate.id,
           vendor_id: group.vendor_id,
           items: linesWithWeights,
-          delivery_date_from: deliveryDateFrom || null,
-          delivery_date_to: deliveryDateTo || null,
+          port_dates: portDatesPayload,
         }),
       });
       const data = await resp.json();
 
-      if (data.success) {
-        setSentPOs((prev) => ({
-          ...prev,
-          [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] },
-        }));
-        setToast({ type: 'success', message: `${data.po_number} sent — ${data.item_count} item(s)` });
+      const createdPOs: any[] = data.purchase_orders || [];
+      if (createdPOs.length > 0) {
+        const newPOs: Record<string, SentPO> = {};
+        for (const po of createdPOs) {
+          const key = `${group.vendor_id}-${po.port_code}`;
+          newPOs[key] = { po_id: po.po_id, po_number: po.po_number, status: po.status || 'sent', vendor_id: group.vendor_id, port_code: po.port_code, items: [] };
+        }
+        setSentPOs(prev => ({ ...prev, ...newPOs }));
+        const portLabels = createdPOs.map(p => p.port_code).join(', ');
+        setToast({ type: 'success', message: `PO(s) sent for ${portLabels} — ${data.item_count} item(s)` });
         onPOSent?.();
       } else {
-        if (data.po_number && data.po_id) {
-          setSentPOs((prev) => ({
-            ...prev,
-            [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] },
-          }));
-        }
         setToast({ type: 'error', message: data.detail || 'Failed to create PO' });
       }
     } catch (err) {
@@ -528,11 +526,9 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
   };
 
   const handleSendAllPOs = async () => {
-    if (!deliveryDateFrom || !deliveryDateTo) {
-      setToast({ type: 'error', message: 'Please set both delivery From and To dates before sending POs.' });
-      return;
-    }
-    const pendingGroups = vendorGroups.filter(g => !sentPOs[g.vendor_id]);
+    const pendingGroups = vendorGroups.filter(g =>
+      !Object.values(sentPOs).some(po => po.vendor_id === g.vendor_id)
+    );
     if (pendingGroups.length === 0) return;
 
     setSendingAll(true);
@@ -554,16 +550,29 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         .filter(l => l.order_weight_lbs > 0);
 
       if (linesWithWeights.length === 0) { failed++; continue; }
+
+      const portDatesPayload: Record<string, { from: string | null; to: string | null }> = {};
+      [...new Set(linesWithWeights.map(l => l.port_code))].forEach(p => {
+        const d = getPortDate(p);
+        portDatesPayload[p] = { from: d.from || null, to: d.to || null };
+      });
+
       try {
         const resp = await fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/purchase-orders/create`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ quote_id: group.quote_id, estimate_id: estimate.id, vendor_id: group.vendor_id,
-                                 items: linesWithWeights, delivery_date_from: deliveryDateFrom, delivery_date_to: deliveryDateTo }),
+                                 items: linesWithWeights, port_dates: portDatesPayload }),
         });
         const data = await resp.json();
-        if (data.success || (data.po_number && data.po_id)) {
-          setSentPOs(prev => ({ ...prev, [group.vendor_id]: { po_id: data.po_id, po_number: data.po_number, status: 'sent', vendor_id: group.vendor_id, items: [] } }));
+        const createdPOs: any[] = data.purchase_orders || [];
+        if (createdPOs.length > 0) {
+          const newPOs: Record<string, SentPO> = {};
+          for (const po of createdPOs) {
+            const key = `${group.vendor_id}-${po.port_code}`;
+            newPOs[key] = { po_id: po.po_id, po_number: po.po_number, status: po.status || 'sent', vendor_id: group.vendor_id, port_code: po.port_code, items: [] };
+          }
+          setSentPOs(prev => ({ ...prev, ...newPOs }));
           sent++;
         } else {
           failed++;
@@ -598,9 +607,10 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
       );
       const data = await resp.json();
       if (resp.ok && data.success) {
+        const key = `${sentPO.vendor_id}-${sentPO.port_code}`;
         setSentPOs((prev) => ({
           ...prev,
-          [sentPO.vendor_id]: { ...sentPO, status: 'cancelled' },
+          [key]: { ...sentPO, status: 'cancelled' },
         }));
         onPOSent?.();
       } else {
@@ -723,133 +733,42 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                       )}
                     </div>
 
-                    <div className="flex items-center space-x-3">
-                      {sentPOs[group.vendor_id] ? (
-                        <>
-                          <span className={`px-3 py-1 text-xs font-medium rounded border ${PO_STATUS_BADGE[sentPOs[group.vendor_id].status] || 'bg-gray-100 text-gray-600 border-gray-300'}`}>
-                            {PO_STATUS_LABEL[sentPOs[group.vendor_id].status] || sentPOs[group.vendor_id].status} · {sentPOs[group.vendor_id].po_number}
-                          </span>
-                          {/* Cancel toggle — always visible when PO exists, locked once vendor accepts/rejects */}
-                          {(() => {
-                            const po = sentPOs[group.vendor_id];
-                            const isActive = ['sent', 'accepted', 'fulfilled'].includes(po.status);
-                            const canCancel = po.status === 'sent';
-                            const trackColor = po.status === 'fulfilled' ? '#059669'
-                              : po.status === 'accepted' ? '#16a34a'
-                              : po.status === 'sent'     ? '#16a34a'
-                              : po.status === 'rejected' ? '#ef4444'
-                              : '#9ca3af';
-                            const tooltipText = po.status === 'accepted'  ? 'Cannot cancel — vendor has accepted'
-                              : po.status === 'fulfilled' ? 'Cannot cancel — PO fulfilled'
-                              : po.status === 'rejected'  ? 'PO rejected by vendor'
-                              : po.status === 'sent'      ? 'Click to cancel this PO'
-                              : '';
-                            const label = po.status === 'sent' ? 'Active'
-                              : po.status === 'accepted'  ? 'Accepted'
-                              : po.status === 'fulfilled' ? 'Fulfilled'
-                              : po.status === 'rejected'  ? 'Rejected'
-                              : 'Cancelled';
-                            return (
-                              <div
-                                onClick={(e) => { e.stopPropagation(); if (canCancel) handleCancelPO(po); }}
-                                title={tooltipText}
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                                         cursor: canCancel ? 'pointer' : 'not-allowed', userSelect: 'none' }}
-                              >
-                                <div className="po-toggle-track" style={{
-                                  width: '40px', height: '22px', borderRadius: '11px',
-                                  position: 'relative', flexShrink: 0, backgroundColor: trackColor,
-                                }}>
-                                  <div className="po-toggle-thumb" style={{
-                                    position: 'absolute', top: '3px', width: '16px', height: '16px',
-                                    borderRadius: '50%', backgroundColor: '#fff',
-                                    boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                                    transform: isActive ? 'translateX(21px)' : 'translateX(3px)',
-                                  }} />
-                                </div>
-                                <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '56px',
-                                               color: isActive ? trackColor : '#9ca3af' }}>
-                                  {label}
-                                </span>
-                              </div>
-                            );
-                          })()}
-                        </>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSendPO(group);
-                          }}
-                          disabled={sendingVendorId === group.vendor_id}
-                          className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                            sendingVendorId === group.vendor_id
-                              ? 'bg-emerald-400 text-white cursor-wait'
-                              : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                          }`}
-                        >
-                          {sendingVendorId === group.vendor_id ? 'Sending…' : 'Send PO'}
-                        </button>
-                      )}
-                      <svg
-                        className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </div>
+                    {(() => {
+                      const vendorPOs = Object.values(sentPOs).filter(po => po.vendor_id === group.vendor_id);
+                      const hasPOs = vendorPOs.length > 0;
+                      return (
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                          {hasPOs ? (
+                            <span className="text-xs text-gray-500 font-medium">
+                              {vendorPOs.length} PO{vendorPOs.length > 1 ? 's' : ''} sent
+                            </span>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleSendPO(group); }}
+                              disabled={sendingVendorId === group.vendor_id}
+                              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                sendingVendorId === group.vendor_id
+                                  ? 'bg-emerald-400 text-white cursor-wait'
+                                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              }`}
+                            >
+                              {sendingVendorId === group.vendor_id ? 'Sending…' : 'Send PO'}
+                            </button>
+                          )}
+                          <svg
+                            className={`w-5 h-5 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Expanded body */}
                   {isExpanded && (
                     <div className="p-4 space-y-4">
-                      {/* PO Timeline */}
-                      {(() => {
-                        const po = sentPOs[group.vendor_id];
-                        if (!po) return null;
-                        const tl = poTimelines[po.po_id];
-                        if (!tl) return null;
-                        const milestones = [
-                          { label: 'Created', date: tl.created_at },
-                          { label: 'Accepted', date: tl.accepted_at },
-                          { label: 'Fulfilled', date: tl.fulfilled_at },
-                        ];
-                        return (
-                          <div style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0 4px', gap: 0 }}>
-                            {milestones.map((m, i) => {
-                              const done = !!m.date;
-                              const dotColor = done ? '#059669' : '#d1d5db';
-                              const labelColor = done ? '#065f46' : '#9ca3af';
-                              return (
-                                <React.Fragment key={m.label}>
-                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '80px' }}>
-                                    <div style={{
-                                      width: '14px', height: '14px', borderRadius: '50%',
-                                      backgroundColor: dotColor, border: `2px solid ${done ? '#059669' : '#d1d5db'}`,
-                                      flexShrink: 0,
-                                    }} />
-                                    <span style={{ fontSize: '11px', fontWeight: 600, color: labelColor, marginTop: '4px', textAlign: 'center' }}>
-                                      {m.label}
-                                    </span>
-                                    <span style={{ fontSize: '10px', color: '#9ca3af', textAlign: 'center' }}>
-                                      {m.date ? new Date(m.date).toLocaleDateString() : '—'}
-                                    </span>
-                                  </div>
-                                  {i < milestones.length - 1 && (
-                                    <div style={{
-                                      flex: 1, height: '2px', backgroundColor: milestones[i + 1].date ? '#059669' : '#e5e7eb',
-                                      alignSelf: 'flex-start', marginTop: '6px',
-                                    }} />
-                                  )}
-                                </React.Fragment>
-                              );
-                            })}
-                          </div>
-                        );
-                      })()}
-
                       {/* No linked quote message */}
                       {!quote && (
                         <div className="text-center text-amber-600 text-sm py-4">
@@ -894,6 +813,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                   const totalPerKg = line.price_per_kg + line.airfreight_per_kg;
                                   const prevPort = idx > 0 ? poLines[idx - 1].port_code : null;
                                   const showPortHeader = line.port_code !== prevPort;
+                                  const portPO = sentPOs[`${group.vendor_id}-${line.port_code}`];
                                   return (
                                     <React.Fragment key={idx}>
                                       {showPortHeader && (
@@ -904,38 +824,60 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                             style={{ backgroundColor: '#0A3D5C' }}
                                           >
                                             <div className="flex items-center justify-between">
-                                              <span className="text-xs font-bold tracking-wide text-white uppercase">
-                                                📍 {line.destination_name || line.port_code}
-                                                <span className="ml-2 font-normal opacity-80">({line.port_code})</span>
-                                              </span>
-                                              <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
-                                                <span className="text-xs text-white/70">Delivery <span className="text-red-400">*</span></span>
-                                                <input
-                                                  type="date"
-                                                  value={deliveryDateFrom}
-                                                  onChange={(e) => {
-                                                    setDeliveryDateFrom(e.target.value);
-                                                    // Auto-advance To date to From + 2 if To is unset or behind From
-                                                    if (e.target.value) {
-                                                      const to = new Date(e.target.value);
-                                                      to.setDate(to.getDate() + 2);
-                                                      const toStr = to.toISOString().split('T')[0];
-                                                      if (!deliveryDateTo || deliveryDateTo < e.target.value) {
-                                                        setDeliveryDateTo(toStr);
-                                                      }
-                                                    }
-                                                  }}
-                                                  style={{ minWidth: '130px', boxSizing: 'border-box' }}
-                                                  className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!deliveryDateFrom ? 'border-yellow-400' : 'border-white/30'}`}
-                                                />
-                                                <span className="text-xs text-white/50">–</span>
-                                                <input
-                                                  type="date"
-                                                  value={deliveryDateTo}
-                                                  onChange={(e) => setDeliveryDateTo(e.target.value)}
-                                                  style={{ minWidth: '130px', boxSizing: 'border-box' }}
-                                                  className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!deliveryDateTo ? 'border-yellow-400' : 'border-white/30'}`}
-                                                />
+                                              {/* Left — port label + PO info */}
+                                              <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-xs font-bold tracking-wide text-white uppercase">
+                                                  📍 {line.destination_name || line.port_code}
+                                                  <span className="ml-2 font-normal opacity-80">({line.port_code})</span>
+                                                </span>
+                                                {portPO && (
+                                                  <>
+                                                    <span className="text-xs text-white/60 normal-case tracking-normal">{portPO.po_number}</span>
+                                                    <span className={`px-2 py-0.5 text-xs font-medium rounded border normal-case tracking-normal ${PO_STATUS_BADGE[portPO.status] || 'bg-gray-100 text-gray-600 border-gray-300'}`}>
+                                                      {PO_STATUS_LABEL[portPO.status] || portPO.status}
+                                                    </span>
+                                                  </>
+                                                )}
+                                              </div>
+                                              {/* Right — delivery dates or cancel */}
+                                              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                                {!portPO && (
+                                                  <>
+                                                    <span className="text-xs text-white/70">Delivery <span className="text-red-400">*</span></span>
+                                                    <input
+                                                      type="date"
+                                                      value={getPortDate(line.port_code).from}
+                                                      onChange={(e) => setPortFrom(line.port_code, e.target.value)}
+                                                      style={{ minWidth: '130px', boxSizing: 'border-box' }}
+                                                      className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!getPortDate(line.port_code).from ? 'border-yellow-400' : 'border-white/30'}`}
+                                                    />
+                                                    <span className="text-xs text-white/50">–</span>
+                                                    <input
+                                                      type="date"
+                                                      value={getPortDate(line.port_code).to}
+                                                      onChange={(e) => setPortTo(line.port_code, e.target.value)}
+                                                      style={{ minWidth: '130px', boxSizing: 'border-box' }}
+                                                      className={`px-1.5 py-0.5 text-xs border rounded bg-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 [color-scheme:dark] ${!getPortDate(line.port_code).to ? 'border-yellow-400' : 'border-white/30'}`}
+                                                    />
+                                                  </>
+                                                )}
+                                                {portPO?.status === 'sent' && (
+                                                  <button
+                                                    onClick={() => handleCancelPO(portPO)}
+                                                    style={{
+                                                      display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                                      padding: '4px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
+                                                      backgroundColor: 'rgba(239,68,68,0.15)', color: '#fca5a5',
+                                                      border: '1px solid rgba(239,68,68,0.4)', cursor: 'pointer',
+                                                      letterSpacing: 'normal', textTransform: 'none',
+                                                      transition: 'background-color 0.15s',
+                                                    }}
+                                                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.30)')}
+                                                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.15)')}
+                                                  >
+                                                    ✕ Cancel PO
+                                                  </button>
+                                                )}
                                               </div>
                                             </div>
                                           </td>
@@ -943,7 +885,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                       )}
                                       <tr className={`border-b border-gray-100 ${selectedLines[key] === false ? 'opacity-40' : 'hover:bg-gray-50'}`}>
                                         <td className="px-2 py-2 text-center">
-                                          {!sentPOs[group.vendor_id] && (
+                                          {!portPO && (
                                             <input
                                               type="checkbox"
                                               checked={selectedLines[key] !== false}
@@ -969,7 +911,7 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
                                         </td>
                                         <td className="px-2 py-1 bg-emerald-50">
                                           {(() => {
-                                            const isSent = !!sentPOs[group.vendor_id];
+                                            const isSent = !!portPO;
                                             return (
                                               <input
                                                 type="text"
@@ -1016,19 +958,22 @@ const PODialog: React.FC<PODialogProps> = ({ estimate, apiBaseUrl, onClose, onPO
         {/* Footer */}
         <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
           <div>
-            {vendorGroups.filter(g => !sentPOs[g.vendor_id]).length > 1 && (
-              <button
-                onClick={handleSendAllPOs}
-                disabled={sendingAll}
-                className={`px-4 py-2 text-sm font-medium rounded transition-colors ${
-                  sendingAll
-                    ? 'bg-emerald-400 text-white cursor-wait'
-                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                }`}
-              >
-                {sendingAll ? 'Sending…' : `Send All POs (${vendorGroups.filter(g => !sentPOs[g.vendor_id]).length} vendors)`}
-              </button>
-            )}
+            {(() => {
+              const pendingCount = vendorGroups.filter(g =>
+                !Object.values(sentPOs).some(po => po.vendor_id === g.vendor_id)
+              ).length;
+              return pendingCount > 1 ? (
+                <button
+                  onClick={handleSendAllPOs}
+                  disabled={sendingAll}
+                  className={`px-4 py-2 text-sm font-medium rounded transition-colors ${
+                    sendingAll ? 'bg-emerald-400 text-white cursor-wait' : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  }`}
+                >
+                  {sendingAll ? 'Sending…' : `Send All POs (${pendingCount} vendors)`}
+                </button>
+              ) : null;
+            })()}
           </div>
           <button
             onClick={onClose}

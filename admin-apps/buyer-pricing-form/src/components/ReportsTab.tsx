@@ -1,5 +1,24 @@
 import React, { useState, useEffect } from 'react';
 
+function getMonday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay();
+  date.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function fmtDate(d: Date): string {
+  return d.toISOString().split('T')[0];
+}
+
+function weekLabel(monday: Date): string {
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const o: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${monday.toLocaleDateString('en-US', o)} – ${sunday.toLocaleDateString('en-US', o)}, ${monday.getFullYear()}`;
+}
+
 interface Company {
   company_id: number;
   company_name: string;
@@ -27,6 +46,7 @@ interface ReportItem {
   clearing_per_lb: number | null;
   total_clearing_price: number | null;
   margin_per_lb: number | null;
+  fulfilled_at: string | null;
 }
 
 interface ReportsTabProps {
@@ -104,9 +124,12 @@ const ReportsTab: React.FC<ReportsTabProps> = ({ companies, apiBaseUrl }) => {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [companyPanelOpen, setCompanyPanelOpen] = useState(true);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const [weekStart, setWeekStart] = useState<Date>(() => getMonday(new Date()));
 
   useEffect(() => {
-    fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/reports/fulfilled-pos`)
+    setLoading(true);
+    setError(null);
+    fetch(`${apiBaseUrl}/buyer-pricing/buyer-estimates/reports/fulfilled-pos?week_start=${fmtDate(weekStart)}`)
       .then(r => r.json())
       .then(data => {
         if (data.success) setAllItems(data.items);
@@ -114,7 +137,11 @@ const ReportsTab: React.FC<ReportsTabProps> = ({ companies, apiBaseUrl }) => {
       })
       .catch(() => setError('Network error — could not load report.'))
       .finally(() => setLoading(false));
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, weekStart]);
+
+  const prevWeek = () => setWeekStart(d => { const n = new Date(d); n.setDate(n.getDate() - 7); return n; });
+  const nextWeek = () => setWeekStart(d => { const n = new Date(d); n.setDate(n.getDate() + 7); return n; });
+  const thisWeek = () => setWeekStart(getMonday(new Date()));
 
   const companyItems = selectedCompanyId
     ? allItems.filter(i => i.company_id === selectedCompanyId)
@@ -174,7 +201,7 @@ const ReportsTab: React.FC<ReportsTabProps> = ({ companies, apiBaseUrl }) => {
       <div style={{ flex: 1, minWidth: 0 }}>
 
         {/* Toggle bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
           <button
             onClick={() => setCompanyPanelOpen(prev => !prev)}
             style={{
@@ -198,6 +225,27 @@ const ReportsTab: React.FC<ReportsTabProps> = ({ companies, apiBaseUrl }) => {
               {companies.find(c => c.company_id === selectedCompanyId)?.company_name}
             </span>
           )}
+
+          {/* Week navigation — same as SummaryTab */}
+          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2">
+            <button onClick={prevWeek} className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-600" title="Previous week">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-700">{weekLabel(weekStart)}</span>
+              <input
+                type="date"
+                value={fmtDate(weekStart)}
+                onChange={e => { const d = new Date(e.target.value + 'T00:00:00'); if (!isNaN(d.getTime())) setWeekStart(getMonday(d)); }}
+                style={{ minWidth: '130px', boxSizing: 'border-box' }}
+                className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+            <button onClick={nextWeek} className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-600" title="Next week">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+            <button onClick={thisWeek} className="px-3 py-1 text-xs font-medium bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors">This Week</button>
+          </div>
         </div>
 
         {loading && (
@@ -362,6 +410,19 @@ const ReportsTab: React.FC<ReportsTabProps> = ({ companies, apiBaseUrl }) => {
                                       ${num(totalBuyerInvoice)}
                                     </strong>
                                   </span>
+
+                                  {/* Fulfilled date */}
+                                  {first.fulfilled_at && (
+                                    <>
+                                      <span style={{ width: 1, height: 14, background: '#cbd5e1', flexShrink: 0 }} />
+                                      <span style={{ fontSize: '11.5px', color: '#64748b' }}>
+                                        Fulfilled:{' '}
+                                        <strong style={{ color: '#334155' }}>
+                                          {new Date(first.fulfilled_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        </strong>
+                                      </span>
+                                    </>
+                                  )}
 
                                   {/* Item count */}
                                   <span style={{ marginLeft: 'auto', fontSize: '11px', fontWeight: 600, color: '#94a3b8', letterSpacing: '0.04em' }}>

@@ -1185,10 +1185,11 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                           return Object.entries(groupedByVendor).map(([vendorName, vendorEstimates]) => {
                             const isVendorExpanded = expandedVendors.has(vendorName);
                             
-                            // Group vendor's estimates by Quote# and Port
+                            // Group vendor's estimates by Quote# and airfreight price
+                            // so same-price ports share one sub-group
                             const groupedByQuotePort: Record<string, Estimate[]> = {};
                             vendorEstimates.forEach(estimate => {
-                              const key = `${estimate.quote_id}-${estimate.port}`;
+                              const key = `${estimate.quote_id}-${estimate.freight_price}`;
                               if (!groupedByQuotePort[key]) {
                                 groupedByQuotePort[key] = [];
                               }
@@ -1240,7 +1241,7 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                                       <tr className="bg-gray-100 border-t border-gray-300 cursor-pointer hover:bg-gray-200" onClick={() => toggleQuote(quotePortKey)}>
                                         <td colSpan={14} className="px-4 py-1.5 font-medium text-gray-700 text-sm">
                                           <span className="inline-block w-4 mr-2">{isQuoteExpanded ? '▼' : '▶'}</span>
-                                          Quote# {firstEstimate.quote_id} | {firstEstimate.quote_date} | Port: {firstEstimate.port}
+                                          Quote# {firstEstimate.quote_id} | {firstEstimate.quote_date} | Port: {[...new Set(quoteEstimates.map(e => e.port))].join(', ')}
                                         </td>
                                       </tr>
                                       {/* Quote's Products - only show if quote is expanded */}

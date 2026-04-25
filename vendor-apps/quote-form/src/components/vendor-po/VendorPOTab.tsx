@@ -11,6 +11,7 @@ interface PurchaseOrder {
   quote_id: number;
   estimate_id: number;
   vendor_id: number;
+  port_code: string;
   status: string;
   created_at: string;
   estimate_number: string;
@@ -199,9 +200,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
   const [bplFormOpen, setBplFormOpen] = useState<{ portCode: string; items: POItem[]; existing: ExistingBPL | null } | null>(null);
   const [sendingBPL, setSendingBPL] = useState<string | null>(null);
 
-  // Port-level acceptance
-  const [acceptedPorts, setAcceptedPorts] = useState<string[]>([]);
-  const [rejectedPorts, setRejectedPorts] = useState<string[]>([]);
+  // Port-level acceptance — derived from selectedPO.status + port_code (one PO per port)
   const [togglingPort, setTogglingPort] = useState<string | null>(null);
 
   // PO action state (reject only — accept is now per-port)
@@ -292,8 +291,6 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
 
       if (poData.success) {
         setSelectedPO(poData.purchase_order);
-        setAcceptedPorts(poData.purchase_order.accepted_ports || []);
-        setRejectedPorts(poData.purchase_order.rejected_ports || []);
         // Initialize fulfilled weight inputs from persisted DB values
         const inputs: Record<number, string> = {};
         for (const item of (poData.purchase_order.items || [])) {
@@ -350,8 +347,6 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
       );
       const data = await resp.json();
       if (resp.ok && data.success) {
-        setAcceptedPorts(data.accepted_ports || []);
-        setRejectedPorts(data.rejected_ports || []);
         // On reject: clear checkboxes for this port's items
         if (action === 'reject') {
           const portItemIds = selectedPO.items.filter(i => i.port_code === portCode).map(i => i.id);
@@ -673,7 +668,7 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(po.status)}`}>{statusLabel(po.status)}</span>
                   </div>
                   <div className="mt-1 text-xs text-gray-500">
-                    Estimate #{po.estimate_number} · {po.item_count} item{po.item_count !== 1 ? 's' : ''}
+                    Estimate #{po.estimate_number} · Port: {po.port_code} · {po.item_count} item{po.item_count !== 1 ? 's' : ''}
                   </div>
                   <div className="mt-0.5 text-xs text-gray-400">{new Date(po.created_at).toLocaleDateString()}</div>
                   {po.fulfilled_weight_kg != null && (
@@ -831,8 +826,8 @@ const VendorPOTab: React.FC<VendorPOTabProps> = ({ vendorId, vendorName, vendorC
                   const someChecked = allPortIds.some(id => checkedItems.has(id));
                   const checkedPortItems = items.filter(i => checkedItems.has(i.id));
                   const hasCheckedItems = checkedPortItems.length > 0;
-                  const isPortAccepted = acceptedPorts.includes(port);
-                  const isPortRejected = rejectedPorts.includes(port);
+                  const isPortAccepted = selectedPO.status === 'accepted' || selectedPO.status === 'fulfilled';
+                  const isPortRejected = selectedPO.status === 'rejected';
                   const canCreateBPL = isPortAccepted;
                   const isToggling = togglingPort === port;
                   const bplSent = portBPL?.status === 'sent';
