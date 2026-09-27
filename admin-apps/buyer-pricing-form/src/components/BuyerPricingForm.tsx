@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import ClearingPricingForm from './ClearingPricingForm';
 import SummaryTab from './SummaryTab';
 import ReportsTab from './ReportsTab';
+import AdminTab from './AdminTab';
 
 // Utility function to format date with day of the week
 const formatDateWithDay = (dateString: string): string => {
@@ -93,7 +93,7 @@ interface CompanyFormState {
 
 const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [mainTab, setMainTab] = useState<'buyer-pricing' | 'clearing-pricing' | 'summary' | 'reports'>('buyer-pricing');
+  const [mainTab, setMainTab] = useState<'buyer-pricing' | 'summary' | 'reports' | 'admin'>('buyer-pricing');
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [selectedBuyers, setSelectedBuyers] = useState<number[]>([]);
   const [selectedCustomerTab, setSelectedCustomerTab] = useState<number | null>(null);
@@ -693,16 +693,6 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
     updateCurrentFormState({ estimates: updatedEstimates });
   };
 
-  const handleSizeChange = (index: number, value: string) => {
-    const formState = getCurrentFormState();
-    const updatedEstimates = [...formState.estimates];
-    updatedEstimates[index] = {
-      ...updatedEstimates[index],
-      fish_size: value
-    };
-    updateCurrentFormState({ estimates: updatedEstimates });
-  };
-
   const handleCheckboxChange = (index: number, checked: boolean) => {
     const formState = getCurrentFormState();
     const updatedEstimates = [...formState.estimates];
@@ -826,46 +816,22 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
       {/* Main Tabs - Buyer Pricing / Clearing Pricing */}
       <div className="border-b-2 border-gray-200 px-4 pt-4">
         <div className="flex space-x-1">
-          <button
-            onClick={() => setMainTab('buyer-pricing')}
-            className={`px-6 py-3 font-medium transition-colors ${
-              mainTab === 'buyer-pricing'
-                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
-          >
-            Buyer Pricing
-          </button>
-          <button
-            onClick={() => setMainTab('clearing-pricing')}
-            className={`px-6 py-3 font-medium transition-colors ${
-              mainTab === 'clearing-pricing'
-                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
-          >
-            Clearing Pricing
-          </button>
-          <button
-            onClick={() => setMainTab('summary')}
-            className={`px-6 py-3 font-medium transition-colors ${
-              mainTab === 'summary'
-                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
-          >
-            Summary
-          </button>
-          <button
-            onClick={() => setMainTab('reports')}
-            className={`px-6 py-3 font-medium transition-colors ${
-              mainTab === 'reports'
-                ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
-          >
-            Reports
-          </button>
+          {(['buyer-pricing', 'summary', 'reports', 'admin'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setMainTab(tab)}
+              className={`px-6 py-3 font-medium transition-colors ${
+                mainTab === tab
+                  ? 'border-b-2 border-blue-500 text-blue-600 -mb-0.5'
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              {tab === 'buyer-pricing' ? 'Buyer Pricing'
+                : tab === 'summary' ? 'Summary'
+                : tab === 'reports' ? 'Reports'
+                : 'Admin'}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1256,14 +1222,8 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
                                     <td className="px-4 py-2 italic text-gray-600">{estimate.scientific_name}</td>
                                     <td className="px-4 py-2">{estimate.cut}</td>
                                     <td className="px-4 py-2">{estimate.grade}</td>
-                                    <td className="px-4 py-2">
-                                      <input
-                                        type="text"
-                                        value={estimate.fish_size || ''}
-                                        onChange={(e) => handleSizeChange(globalIdx, e.target.value)}
-                                        placeholder="Enter size"
-                                        className="w-24 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                      />
+                                    <td className="px-4 py-2 text-gray-700">
+                                      {estimate.fish_size || '—'}
                                     </td>
                                     <td className="px-4 py-2">${estimate.fish_price.toFixed(2)}</td>
                                     <td className="px-4 py-2">
@@ -1350,11 +1310,6 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
         </div>
       )}
 
-      {/* Clearing Pricing Tab Content */}
-      {mainTab === 'clearing-pricing' && (
-        <ClearingPricingForm apiBaseUrl={apiBaseUrl} />
-      )}
-
       {/* Summary Tab Content */}
       {mainTab === 'summary' && (
         <div className="p-6">
@@ -1369,6 +1324,11 @@ const BuyerPricingForm = ({ apiBaseUrl }: Props) => {
           <h2 className="text-2xl font-bold mb-6">Fulfilled PO Report</h2>
           <ReportsTab companies={filteredCompanies} apiBaseUrl={apiBaseUrl} />
         </div>
+      )}
+
+      {/* Admin Tab Content */}
+      {mainTab === 'admin' && (
+        <AdminTab apiBaseUrl={apiBaseUrl} />
       )}
       </div>
     </div>
